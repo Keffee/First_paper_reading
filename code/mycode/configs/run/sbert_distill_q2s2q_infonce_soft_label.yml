@@ -1,0 +1,81 @@
+mode: train
+
+bert_path: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/yangyang113/distillation_clean/plms/smallbert_yuji/auto-medium/
+
+dataset: mt_new
+train_dataset: 
+  name: sbert_distill_q2q
+  params:
+    query_path: data/mt_new/queries
+    sup_path: data/mt_new/spus
+    data_path: data/mt_new/new_train
+    soft_label_path: ckpt/mt_new/bert_train_logits_2022-12-20_21:42:05/train_logits.npy
+train_data_collator:
+  name: sbert_distill_cont
+  params:
+    dataset_path: data/mt_new
+    query_neigh_g: data/mt_new/q_s_train.graph
+    spu_neigh_g: data/mt_new/q_s_train.graph
+train_batch_size: 1024
+
+
+val_dataset: 
+  name: bert
+  params:
+    data_path: data/mt_new/new_val
+    aug: null
+    aug_path: null
+val_data_collator:
+  name: sbert
+  params:
+    token_length: 32
+    tokenizer: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/yangyang113/distillation_clean/plms/smallbert_yuji/auto-medium/
+valid_batch_size: 1024
+
+test_dataset: 
+  name: bert
+  params:
+    data_path: data/mt_new/new_test
+    aug: null
+    aug_path: null
+test_data_collator:
+  name: sbert
+  params:
+    token_length: 32
+    tokenizer: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/yangyang113/distillation_clean/plms/smallbert_yuji/auto-medium/
+test_batch_size: 1024
+
+####for dist#######
+find_unused_parameters: True
+
+#######model#######
+model_params:
+  loss: infonce
+  hard_label_lambda: 0.5
+  infonce_loss_lambda: 0.1
+  temp: 0.05
+  num_classes: 2
+  bert_path: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/yangyang113/distillation_clean/plms/smallbert_yuji/auto-medium/
+#############
+n_epoch: 1000
+model: sbert_distill_cont
+early_stop: 10
+bert_hidden_size: 384
+num_classes: 2
+max_length: 32
+print_every: 50
+save_every_epoch: 5
+eval_every_epoch: 1
+main_metric: f1
+random_seed: 666
+optimizer_func: optimizer_bert
+optimizer_params:
+  lr: 0.00001
+  correct_bias: False
+
+scheduler_params:
+  scheduler: WarmupLinear
+  warmup_steps: 0.05
+
+description: soft_label
+

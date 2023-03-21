@@ -1,0 +1,92 @@
+mode: train
+
+bert_path: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/yangyang113/distillation_clean/plms/smallbert_yuji/auto-medium/
+
+dataset: mt_new
+train_dataset: 
+  name: sbert_distill
+  params:
+    data_path: data/mt_new/new_train
+    soft_label_path: null
+train_data_collator:
+  name: sbert_distill_gnn
+  params:
+    token_length: 32
+    tokenizer: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/yangyang113/distillation_clean/plms/smallbert_yuji/auto-medium/
+    query_path: data/mt_new/queries
+    spu_path: data/mt_new/spus
+    graph_path: data/mt_new/q_s_train.graph
+    fanouts: [5]
+    is_train: True
+train_batch_size: 1024
+
+
+val_dataset: 
+  name: sbert_distill
+  params:
+    data_path: data/mt_new/new_val
+    soft_label_path: null
+val_data_collator:
+  name: sbert_distill_gnn
+  params:
+    token_length: 32
+    tokenizer: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/yangyang113/distillation_clean/plms/smallbert_yuji/auto-medium/
+    query_path: data/mt_new/queries
+    spu_path: data/mt_new/spus
+    graph_path: data/mt_new/q_s_train.graph
+    fanouts: [5]
+    is_train: False
+valid_batch_size: 1024
+
+test_dataset: 
+  name: sbert_distill
+  params:
+    data_path: data/mt_new/new_test
+    soft_label_path: null
+test_data_collator:
+  name: sbert_distill_gnn
+  params:
+    token_length: 32
+    tokenizer: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/yangyang113/distillation_clean/plms/smallbert_yuji/auto-medium/
+    query_path: data/mt_new/queries
+    spu_path: data/mt_new/spus
+    graph_path: data/mt_new/q_s_train.graph
+    fanouts: [5]
+    is_train: False
+test_batch_size: 1024
+
+model_params:
+  bert_path: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/yangyang113/distillation_clean/plms/smallbert_yuji/auto-medium/
+  num_nodes: 1896833
+  gnn: lightgcn
+  gnn_emb: 384
+  gnn_layers: 1
+
+####for dist#######
+find_unused_parameters: True
+
+#######distill#######
+hard_label_lambda: 1
+
+#############
+n_epoch: 1000
+model: sbert_distill_gnn
+early_stop: 10
+bert_hidden_size: 384
+num_classes: 2
+max_length: 32
+print_every: 50
+save_every_epoch: 5
+eval_every_epoch: 1
+main_metric: f1
+random_seed: 666
+
+optimizer_params:
+  lr: 0.00001
+  correct_bias: False
+
+scheduler_params:
+  scheduler: WarmupLinear
+  warmup_steps: 0.05
+
+

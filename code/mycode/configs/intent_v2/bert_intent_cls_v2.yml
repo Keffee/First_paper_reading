@@ -1,0 +1,61 @@
+mode: train
+
+bert_path: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/yangyang113/distillation_clean/plms/smallbert_yuji/auto-medium/
+
+dataset: mt_intent_v2
+train_dataset: 
+  name: intent
+  params:
+    data_path: data/intent_v2/train.txt
+train_data_collator:
+  name: intent_cl
+  params:
+    token_length: 32
+    tokenizer: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/yangyang113/distillation_clean/plms/smallbert_yuji/auto-medium/
+train_batch_size: 1024
+
+
+val_dataset: 
+  name: intent
+  params:
+    data_path: data/intent_v2/val.txt
+val_data_collator:
+  name: intent_cl
+  params:
+    token_length: 32
+    tokenizer: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/yangyang113/distillation_clean/plms/smallbert_yuji/auto-medium/
+valid_batch_size: 1024
+
+test_dataset: 
+  name: intent
+  params:
+    data_path: data/intent_v2/test.txt
+test_data_collator:
+  name: intent_cl
+  params:
+    token_length: 32
+    tokenizer: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/yangyang113/distillation_clean/plms/smallbert_yuji/auto-medium/
+test_batch_size: 1024
+
+# for dist
+find_unused_parameters: False
+
+#############
+n_epoch: 1000
+model: bert
+early_stop: 4
+bert_hidden_size: 384
+num_classes: 386
+max_length: 32
+print_every: 50
+save_every_epoch: 5
+eval_every_epoch: 1
+eval_func: eval_multi_class
+main_metric: f1
+random_seed: 666
+
+optimizer_params:
+  lr: 0.00001
+  correct_bias: False
+
+

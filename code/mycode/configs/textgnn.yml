@@ -1,0 +1,32 @@
+mode: train
+
+bert_path: /mnt/dolphinfs/hdd_pool/docker/user/hadoop-aipnlp/yangyang113/distillation_clean/plms/smallbert_yuji/auto-medium/
+
+dataset: mt
+train_data_path: /home/hadoop-aipnlp/dolphinfs/qinlijiao02/LM+GNN/data/mt/train_neigh.csv
+train_batch_size: 512
+valid_data_path: /home/hadoop-aipnlp/dolphinfs/qinlijiao02/LM+GNN/data/mt/val_neigh.csv
+valid_batch_size: 512
+test_data_path: /home/hadoop-aipnlp/dolphinfs/qinlijiao02/LM+GNN/data/mt/test_neigh.csv
+test_batch_size: 512
+
+n_epoch: 100
+model: textgnn
+early_stop: 4
+bert_hidden_size: 384
+num_classes: 2
+max_length: 32
+print_every: 50
+save_every_epoch: 5
+eval_every_epoch: 1
+main_metric: f1
+random_seed: 666
+query_neigh_num: 4
+spu_neigh_num: 4
+gpus: 1
+
+optimizer_params:
+  lr: 0.00001
+  correct_bias: False
+
+

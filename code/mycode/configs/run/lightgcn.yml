@@ -1,0 +1,89 @@
+#####gnn接在bert之后##########
+mode: train
+
+
+dataset: mt_new
+train_dataset: 
+  name: sbert_distill
+  params:
+    data_path: data/mt_new/new_train
+    soft_label_path: null
+train_data_collator:
+  name: gnn
+  params:
+    dataset_path: data/mt_new
+    g_path: data/mt_new/pos_neg_train.graph
+    fanouts: [5]
+    query_path: data/mt_new/queries
+    spu_path: data/mt_new/spus
+    is_train: True
+train_batch_size: 1024
+
+
+val_dataset: 
+  name: sbert_distill
+  params:
+    data_path: data/mt_new/new_val
+    soft_label_path: null
+val_data_collator:
+  name: gnn
+  params:
+    dataset_path: data/mt_new
+    g_path: data/mt_new/pos_neg_train.graph
+    fanouts: [5]
+    query_path: data/mt_new/queries
+    spu_path: data/mt_new/spus
+    is_train: False
+valid_batch_size: 1024
+
+test_dataset: 
+  name: sbert_distill
+  params:
+    data_path: data/mt_new/new_test
+    soft_label_path: null
+test_data_collator:
+  name: gnn
+  params:
+    dataset_path: data/mt_new
+    g_path: data/mt_new/pos_neg_train.graph
+    fanouts: [5]
+    query_path: data/mt_new/queries
+    spu_path: data/mt_new/spus
+    is_train: False
+test_batch_size: 1024
+
+model_params:
+  query_emb: ckpt/mt_new/sbert_2022-12-08_16:20:57/query_emb.npy
+  spu_emb: ckpt/mt_new/sbert_2022-12-08_16:20:57/spu_emb.npy
+  freeze_emb: True
+  gnn_emb: 384
+  gnn_layers: 1
+  num_classes: 2
+  gnn: lightgcn
+
+description: lightgcn
+
+####for dist#######
+find_unused_parameters: False
+
+
+#############
+n_epoch: 1000
+model: gnn
+early_stop: 10
+bert_hidden_size: 384
+num_classes: 2
+max_length: 32
+print_every: 50
+save_every_epoch: 5
+eval_every_epoch: 1
+main_metric: f1
+random_seed: 666
+
+
+optimizer: adam
+optimizer_params:
+  lr: 0.001
+
+
+
