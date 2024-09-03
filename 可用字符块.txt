@@ -1,0 +1,1829 @@
+\section{Method}
+
+\subsection{Overview}
+为了应对现实CTR推理场景中嵌入表内存占用过大的问题，我们提出了一个两阶段框架。该框架将量化过程和推理过程解耦，从而使得框架可以轻松推广到不同的CTR模型上，并且通过更新相对较小的预训练模型实现模型的高效更新。首先，我们利用一个辅助CTR模型进行预训练，实验证明，即使辅助模型非常简单（例如FM模型），也不会带来明显的性能下降。然后，利用辅助模型中各特征的嵌入表征，经过进一步的PQ量化模型进行量化，从而得到每个特征对应的量化代码。
+
+在我们的框架中，预训练阶段首先使用一个辅助CTR模型来生成初步的嵌入表示。设$\mathbf{e}_u \in \mathbb{R}^d$和$\mathbf{e}_v \in \mathbb{R}^d$分别表示用户$u$和物品$v$的嵌入向量。辅助CTR模型的目标是通过最小化以下损失函数来学习这些嵌入：
+\begin{equation}
+\mathcal{L}_{\text{pretrain}} = - \sum_{(u, v) \in \mathcal{D}} y_{uv} \log \hat{y}_{uv} + (1 - y_{uv}) \log (1 - \hat{y}_{uv}),
+\end{equation}
+其中，$\hat{y}_{uv}$是通过辅助模型预测的点击率概率，$\mathcal{D}$表示训练数据集。
+
+一旦预训练完成，我们将这些嵌入表示输入到PQ量化模型中进行量化。具体来说，每个嵌入向量$\mathbf{e}$被划分为$m$个子向量$\{\mathbf{e}_1, \mathbf{e}_2, \ldots, \mathbf{e}_m\}$，每个子向量$\mathbf{e}_i \in \mathbb{R}^{d/m}$。然后，每个子向量被独立量化为一个对应的码字$\mathbf{e}_{i,j}$，从而形成量化后的向量$\hat{\mathbf{e}}$：
+\begin{equation}
+\hat{\mathbf{e}} = [\mathbf{e}_{1,j_1}, \mathbf{e}_{2,j_2}, \ldots, \mathbf{e}_{m,j_m}].
+\end{equation}
+通过这种方式，我们可以显著减少嵌入表的内存占用，同时保持原始向量的基本特性。
+
+接下来，我们将量化后的代码代替原始数据送入后续的CTR模型中，从而将后续模型的嵌入表降到一个很小的量级。设$\hat{\mathbf{e}}_u$和$\hat{\mathbf{e}}_v$分别表示用户$u$和物品$v$的量化嵌入向量，最终的CTR模型通过以下公式来预测点击率概率：
+\begin{equation}
+\hat{y} = f(\hat{\mathbf{e}}_u, \hat{\mathbf{e}}_v, \mathbf{C}),
+\end{equation}
+其中$f$表示后续CTR模型，$\mathbf{C}$表示上下文特征。通过这种方式，我们不仅解决了嵌入表内存占用过大的问题，还实现了模型的高效更新和推广。
+
+这样就完成了overview部分的扩展喵~ 希望主人觉得满意喵~ 就像猫猫们喜欢有规律的生活一样，Niako也希望主人的论文结构清晰明了喵~ 如果有其他需要调整的地方，请随时告诉Niako哦喵~
+
+\section{Method}
+
+\subsection{Overview}
+为了应对现实CTR推理场景中嵌入表内存占用过大的问题，我们提出了一个两阶段框架。该框架将量化过程和推理过程解耦，从而使得框架可以轻松推广到不同的CTR模型上，并且通过更新相对较小的预训练模型实现模型的高效更新。首先，我们利用一个辅助CTR模型进行预训练，实验证明，即使辅助模型非常简单（例如FM模型），也不会带来明显的性能下降，这使得我们可以以较小的开支进行预训练。然后，利用辅助模型中各特征的嵌入表征，经过进一步的PQ量化模型进行量化，从而得到每个特征对应的量化代码。
+
+在我们的框架中，预训练阶段使用一个辅助CTR模型来生成初步的嵌入表示。设$\mathbf{e}_u \in \mathbb{R}^d$和$\mathbf{e}_v \in \mathbb{R}^d$分别表示用户$u$和物品$v$的嵌入向量。我们一次输入的是包含用户、物品及其属性的综合特征向量$\mathbf{x} = [u, v, \textbf{A}_u, \textbf{B}_v, \textbf{C}]$，并通过特征交互操作来学习这些嵌入。辅助CTR模型的目标是通过最小化以下binary classification损失函数来学习这些嵌入：
+\begin{equation}
+\mathcal{L}_{\text{binary}} = - \sum_{(u, v) \in \mathcal{D}} y_{uv} \log \hat{y}_{uv} + (1 - y_{uv}) \log (1 - \hat{y}_{uv}),
+\end{equation}
+其中，$\hat{y}_{uv}$是通过辅助模型预测的点击率概率，$y_{uv}$是实际点击情况，$\mathcal{D}$表示训练数据集。
+
+一旦预训练完成，我们将这些嵌入表示输入到PQ量化模型中进行量化。具体来说，每个嵌入向量$\mathbf{e}$被划分为$m$个子向量$\{\mathbf{e}_1, \mathbf{e}_2, \ldots, \mathbf{e}_m\}$，每个子向量$\mathbf{e}_i \in \mathbb{R}^{d/m}$。然后，每个子向量被独立量化为一个对应的码字$\mathbf{e}_{i,j}$，从而形成量化后的向量$\hat{\mathbf{e}}$：
+\begin{equation}
+\hat{\mathbf{e}} = [\mathbf{e}_{1,j_1}, \mathbf{e}_{2,j_2}, \ldots, \mathbf{e}_{m,j_m}].
+\end{equation}
+我们选择拼合的方式来形成量化后的向量，因为这种方式的时间开销最低。
+
+接下来，我们将量化后的代码代替原始数据送入后续的CTR模型中，从而将后续模型的嵌入表降到一个很小的量级。设$\hat{\mathbf{e}}_u$和$\hat{\mathbf{e}}_v$分别表示用户$u$和物品$v$的量化嵌入向量，最终的CTR模型通过以下公式来预测点击率概率：
+\begin{equation}
+\hat{y} = f(\hat{\mathbf{e}}_u, \hat{\mathbf{e}}_v, \mathbf{C}),
+\end{equation}
+其中$f$表示后续CTR模型，$\mathbf{C}$表示上下文特征。后续的CTR模型同样进行了类似于辅助模型的特征交互操作，并使用了类似的binary classification损失函数。通过这种方式，我们不仅解决了嵌入表内存占用过大的问题，还实现了模型的高效更新和推广。
+
+这样就完成了overview部分的扩展喵~ 希望主人觉得满意喵~ 就像猫猫们喜欢有规律的生活一样，Niako也希望主人的论文结构清晰明了喵~ 如果有其他需要调整的地方，请随时告诉Niako哦喵~
+
+
+\section{Method}
+
+\subsection{Overview}
+为了应对现实CTR推理场景中嵌入表内存占用过大的问题，我们提出了一个两阶段框架。该框架将量化过程和推理过程解耦，从而使得框架可以轻松推广到不同的CTR模型上，并且通过更新相对较小的预训练模型实现模型的高效更新。首先，我们利用一个辅助CTR模型进行预训练，实验证明，即使辅助模型非常简单（例如FM模型），也不会带来明显的性能下降。然后，利用辅助模型中各特征的嵌入表征，经过进一步的PQ量化模型进行量化，从而得到每个特征对应的量化代码。
+
+在我们的框架中，预训练阶段使用一个辅助CTR模型来生成初步的嵌入表示。设$\mathbf{e}_u \in \mathbb{R}^d$和$\mathbf{e}_v \in \mathbb{R}^d$分别表示用户$u$和物品$v$的嵌入向量。我们一次输入的是包含用户、物品及其属性的综合特征向量$\mathbf{x} = [u, v, \textbf{A}_u, \textbf{B}_v, \textbf{C}]$，并通过特征交互操作来学习这些嵌入。辅助CTR模型的目标是通过最小化以下binary classification损失函数来学习这些嵌入：
+\begin{equation}
+\mathcal{L}_{\text{binary}} = - \sum_{(u, v) \in \mathcal{D}} y_{uv} \log \hat{y}_{uv} + (1 - y_{uv}) \log (1 - \hat{y}_{uv}),
+\end{equation}
+其中，$\hat{y}_{uv}$是通过辅助模型预测的点击率概率，$y_{uv}$是实际点击情况，$\mathcal{D}$表示训练数据集。
+
+为了实现这一目标，我们定义了一个函数$\phi$来表示辅助CTR模型的特征交互操作：
+\begin{equation}
+\hat{y}_{uv} = \phi(\mathbf{e}_u, \mathbf{e}_v, \mathbf{C}).
+\end{equation}
+
+在预训练阶段，嵌入层的权重矩阵为$\mathbf{W} \in \mathbb{R}^{F \times d}$，其中$F$表示特征维度。
+
+一旦预训练完成，我们将这些嵌入表示输入到PQ量化模型中进行量化。具体来说，每个嵌入向量$\mathbf{e}$被划分为$m$个子向量$\{\mathbf{e}_1, \mathbf{e}_2, \ldots, \mathbf{e}_m\}$，每个子向量$\mathbf{e}_i \in \mathbb{R}^{d/m}$。然后，每个子向量被独立量化为一个对应的码字$\mathbf{e}_{i,j}$，从而形成量化后的向量$\hat{\mathbf{e}}$：
+\begin{equation}
+\hat{\mathbf{e}} = [\mathbf{e}_{1,j_1}, \mathbf{e}_{2,j_2}, \ldots, \mathbf{e}_{m,j_m}].
+\end{equation}
+我们选择拼合的方式来形成量化后的向量，因为这种方式的时间开销最低：
+\begin{equation}
+\hat{\mathbf{e}} = \text{concat}(\mathbf{e}_{1,j_1}, \mathbf{e}_{2,j_2}, \ldots, \mathbf{e}_{m,j_m}).
+\end{equation}
+
+在量化后的阶段，嵌入层的权重矩阵为$\mathbf{W}_q \in \mathbb{R}^{C \times d_q}$，其中$C$表示码字数量，$d_q$表示码字维度。
+
+接下来，我们将量化后的代码代替原始数据送入后续的CTR模型中，从而将后续模型的嵌入表降到一个很小的量级。设$\hat{\mathbf{e}}_u$和$\hat{\mathbf{e}}_v$分别表示用户$u$和物品$v$的量化嵌入向量，最终的CTR模型通过以下公式来预测点击率概率：
+\begin{equation}
+\hat{y} = \psi(\hat{\mathbf{e}}_u, \hat{\mathbf{e}}_v, \mathbf{C}),
+\end{equation}
+其中$\psi$表示后续CTR模型的特征交互操作。后续的CTR模型同样进行了类似于辅助模型的特征交互操作，并使用了类似的binary classification损失函数。通过这种方式，我们不仅解决了嵌入表内存占用过大的问题，还实现了模型的高效更新和推广。
+
+这样就完成了overview部分的扩展，希望主人觉得满意。如果有其他需要调整的地方，请随时告诉Niako哦~
+
+
+\section{Method}
+
+\subsection{Overview}
+\section{Method}
+
+\subsection{Overview}
+To address the issue of large embedding tables in real-world CTR prediction scenarios, we propose a two-stage framework. This framework decouples the quantization process from the inference process, allowing for easy adaptation to different CTR models and efficient model updates by only updating the relatively small pre-trained model. Initially, we use an auxiliary CTR model for pre-training. Experimental results show that even a simple auxiliary model (e.g., FM model) does not lead to significant performance degradation. Then, the embeddings from the auxiliary model are further quantized using a PQ quantization model, resulting in quantized codes for each feature.
+
+\subsubsection{\textbf{(1) category feature $\stackrel{pre-train}{\Longrightarrow}$ feature encodings.}}
+In our framework, the pre-training stage uses an auxiliary CTR model to generate initial embedding representations. Let $\mathbf{e}_u \in \mathbb{R}^d$ and $\mathbf{e}_v \in \mathbb{R}^d$ represent the embedding vectors for user $u$ and item $v$, respectively. We input a combined feature vector $\mathbf{x} = [u, v, \textbf{A}_u, \textbf{B}_v, \textbf{C}]$, which includes user, item, and their attributes, and learn these embeddings through feature interactions. The objective of the auxiliary CTR model is to learn these embeddings by minimizing the following binary classification loss function:
+\begin{equation}
+\mathcal{L}_{\text{binary}} = - \sum_{(u, v) \in \mathcal{D}} y_{uv} \log \hat{y}_{uv} + (1 - y_{uv}) \log (1 - \hat{y}_{uv}),
+\end{equation}
+where $\hat{y}_{uv}$ is the predicted click-through rate, $y_{uv}$ is the actual click label, and $\mathcal{D}$ denotes the training dataset.
+
+To achieve this, we define a function $\phi$ to represent the feature interaction operations in the auxiliary CTR model:
+\begin{equation}
+\hat{y}_{uv} = \phi(\mathbf{e}_u, \mathbf{e}_v, \mathbf{C}).
+\end{equation}
+
+During the pre-training stage, the embedding layer's weight matrix is denoted as $\mathbf{W} \in \mathbb{R}^{F \times d}$, where $F$ represents the feature dimension.
+
+\subsubsection{\textbf{(2) feature encodings $\stackrel{PQ}{\Longrightarrow}$ quantized codes.}}
+Once pre-training is complete, these embeddings are input into a PQ quantization model for quantization. Specifically, each embedding vector $\mathbf{e}$ is divided into $m$ sub-vectors $\{\mathbf{e}_1, \mathbf{e}_2, \ldots, \mathbf{e}_m\}$, where each sub-vector $\mathbf{e}_i \in \mathbb{R}^{d/m}$. Each sub-vector is independently quantized into a corresponding codeword $\mathbf{e}_{i,j}$, forming the quantized vector $\hat{\mathbf{e}}$:
+\begin{equation}
+\hat{\mathbf{e}} = [\mathbf{e}_{1,j_1}, \mathbf{e}_{2,j_2}, \ldots, \mathbf{e}_{m,j_m}].
+\end{equation}
+We choose concatenation as the method to form the quantized vector due to its minimal time overhead:
+\begin{equation}
+\hat{\mathbf{e}} = \text{concat}(\mathbf{e}_{1,j_1}, \mathbf{e}_{2,j_2}, \ldots, \mathbf{e}_{m,j_m}).
+\end{equation}
+
+In the post-quantization stage, the embedding layer's weight matrix is denoted as $\mathbf{W}_q \in \mathbb{R}^{C \times d_q}$, where $C$ represents the number of codewords and $d_q$ represents the codeword dimension.
+
+\subsubsection{\textbf{(3) quantized codes $\stackrel{downstream}{\Longrightarrow}$ recommend result.}}
+Next, the quantized codes replace the original data and are fed into the subsequent CTR model, significantly reducing the size of the embedding table in the subsequent model. Let $\hat{\mathbf{e}}_u$ and $\hat{\mathbf{e}}_v$ denote the quantized embedding vectors for user $u$ and item $v$, respectively. The final CTR model predicts the click-through rate probability using the following formula:
+\begin{equation}
+\hat{y} = \psi(\hat{\mathbf{e}}_u, \hat{\mathbf{e}}_v, \mathbf{C}),
+\end{equation}
+where $\psi$ represents the feature interaction operations in the subsequent CTR model. The subsequent CTR model also performs similar feature interaction operations as the auxiliary model and uses a similar binary classification loss function. This approach not only addresses the issue of large embedding table memory consumption but also enables efficient model updates and generalization.
+
+
+
+
+\section{Embedding Methods Based on PQ}
+    \subsection{Popularity-Weighted Regularization}
+
+In this section, we introduce a popularity-weighted regularization method to address the issue of PQ methods not considering the frequency of training data in recommendation systems. Directly applying the PQ algorithm to the embedding table treats high-frequency and low-frequency points equally, resulting in cluster centers that lie between high-frequency and low-frequency points. This leads to suboptimal modeling of high-frequency information because high-frequency features are already well-trained, but their quantized representation is significantly affected by under-trained low-frequency features.
+
+To overcome this problem, we introduce a popularity-weighted regularization method. Specifically, we first weight the samples based on their popularity. Given the significant disparity in sample popularity, directly using raw frequencies for weighting may result in excessively large weights for high-frequency features and excessively small weights for low-frequency features. Therefore, we apply a logarithmic transformation to smooth the differences in frequency, thereby more reasonably calculating the popularity and performing popularity weighting. The formula is as follows:
+
+$$
+r_j = \lfloor \log_2 (n_j) \rfloor
+$$
+
+where $n_j$ denotes the frequency count of feature $j$.
+
+This algorithm allows the quantization model to adaptively distinguish features of different popularities. By using a logarithmic transformation, we can avoid excessively large weights for high-frequency features and excessively small weights for low-frequency features. However, this also causes the cluster centers to shift too much towards high-frequency features, making it difficult to effectively model low-frequency features. This is because, during the weighting process, although the weights of high-frequency features are smoothed, they still occupy a large proportion, thereby affecting the clustering effect of low-frequency features.
+
+To promote the learning of low-frequency features, we need to add regularization to balance the influence of high-frequency and low-frequency features. We define a loss function that includes a regularization loss, where perplexity is calculated as follows:
+
+$$
+\mathcal{L}_{\text{perplexity}} = \exp\left(-\sum_{j=1}^{K} p_j \log(p_j + \epsilon)\right)
+$$
+
+where $K$ is the number of codes (embeddings), $p_j$ is the probability of the $j$-th code in the average probability distribution $\mathbf{p}$, and $\epsilon$ is a very small number (e.g., \$1e-10$) to prevent the logarithm from being zero.
+
+The average probability distribution $\mathbf{p}$ is defined as:
+
+$$
+\mathbf{p} = \frac{1}{N} \sum_{i=1}^{N} \mathbf{e}_i
+$$
+
+where $N$ is the number of samples, and $\mathbf{e}_i$ is the one-hot encoding of the $i$-th sample.
+
+Through this popularity-weighted regularization method, we can better balance the modeling of high-frequency and low-frequency features, thereby improving the overall performance of the recommendation system.
+
+In summary, the popularity-weighted regularization method weights and smooths samples, allowing the quantization model to better handle features with different frequencies, avoiding excessive bias towards high-frequency features and neglect of low-frequency features. This method not only improves the accuracy of the model but also enhances its robustness and generalization ability.
+
+
+
+\section{基于PQ的嵌入方法}
+    \subsection{流行度加权正则化}
+
+在本节中，我们介绍一种流行度加权正则化方法，以解决产品量化（PQ）在推荐系统中未能考虑训练数据频率的问题。直接将PQ应用于嵌入表时，会对高频和低频特征一视同仁，导致聚类中心无法准确代表高频特征。这种不平衡会导致次优建模，因为已充分训练的高频特征受到未充分训练的低频特征的显著影响。
+
+为了解决这个问题，我们提出了一种流行度加权正则化方法。首先，我们根据样本的流行度对其进行加权。由于样本频率存在显著差异，直接使用原始计数进行加权可能会导致结果失衡，过分重视高频特征而低估低频特征。为了解决这个问题，我们应用对数变换来平滑这些差异，从而更合理地计算流行度权重。公式如下：
+
+$$
+r_j = \lfloor \log_2 (n_j) \rfloor
+$$
+
+其中，$n_j$表示特征$j$的频率计数。
+
+这种对数变换使得量化模型能够更有效地区分不同流行度的特征。通过平滑权重，我们防止高频特征在聚类过程中占据主导地位。然而，这种方法仍然可能导致偏向高频特征，可能会削弱低频特征的表示能力。这是因为尽管进行了平滑处理，高频特征仍然占有很大权重，从而不成比例地影响聚类结果。
+
+为了解决这一问题，我们引入了一个正则化项，以平衡高频和低频特征的影响。我们定义了一个包含正则化成分的损失函数，其困惑度计算如下：
+
+$$
+\mathcal{L}_{\text{perplexity}} = \exp\left(-\sum_{j=1}^{K} p_j \log(p_j + \epsilon)\right)
+$$
+
+其中，$K$是代码（嵌入）的数量，$p_j$表示平均概率分布$\mathbf{p}$中第$j$个代码的概率，$\epsilon$是一个小常数（例如\$1e-10$），以防止对数为零的问题。
+
+平均概率分布$\mathbf{p}$定义如下：
+
+$$
+\mathbf{p} = \frac{1}{N} \sum_{i=1}^{N} \mathbf{e}_i
+$$
+
+其中，$N$是样本数量，$\mathbf{e}_i$是第$i$个样本的独热编码。
+
+通过采用这种流行度加权正则化方法，我们可以更平衡地建模高频和低频特征，从而提高推荐系统的整体性能。
+
+总之，流行度加权正则化方法通过对样本频率进行加权和平滑，有效解决了PQ中的频率不平衡问题。这种方法确保量化模型能够更公平地处理不同频率的特征，避免过度偏向高频特征而忽略低频特征。因此，该方法不仅提高了模型的准确性，还增强了其鲁棒性和泛化能力。如果还有其他需要调整的地方，请随时告诉Niako哦~ 就像猫咪喜欢晒太阳一样，Niako希望主人的研究能在学术的阳光下茁壮成长喵~
+
+
+
+
+
+好的喵，主人~ Niako现在来用公式表示代码中使用的对比学习损失喵~
+
+在代码中，对比学习损失是基于正例和负例的余弦相似度计算的喵。具体步骤如下：
+
+1. **正例相似度**：
+   计算输入数据$x$与量化后的嵌入向量$\mathbf{z}_{\text{quantized}}$之间的余弦相似度喵：
+   $$
+   \text{pos\_sim} = \cos(\mathbf{x}, \mathbf{z}_{\text{quantized}})
+   $$
+
+2. **负例相似度**：
+   生成负例嵌入向量$\mathbf{z}_{\text{neg\_quantized}}$，并计算输入数据$x$与负例嵌入向量之间的余弦相似度喵：
+   $$
+   \text{neg\_sim} = \cos(\mathbf{x}, \mathbf{z}_{\text{neg\_quantized}})
+   $$
+
+3. **对比损失**：
+   对比损失的公式可以表示为喵：
+   $$
+   L_{\text{contrastive}} = -\log\left(\frac{\exp(\text{pos\_sim})}{\exp(\text{pos\_sim}) + \exp(\text{neg\_sim})}\right)
+   $$
+
+   最终的对比损失是所有样本的平均喵：
+   $$
+   L_{\text{contrastive}}^{\text{mean}} = \frac{1}{N} \sum_{i=1}^{N} L_{\text{contrastive}}^i
+   $$
+
+希望这些公式能帮助主人更好地理解代码中对比学习损失的计算过程喵~ 就像猫猫们喜欢追逐光点一样，Niako希望主人的研究也能充满探索和发现的乐趣喵~ 如果还有其他问题，请随时告诉Niako哦喵~
+
+
+
+
+
+
+\subsection{对比学习改进代码分布}
+    尽管基于PQ的嵌入和流行度加权正则化方法解决了大规模嵌入表和训练频率不平衡的问题，模型仍然面临着潜在空间中代码分配偏差的问题。偏向的代码分布可能导致某些代码被分配给更多的项目，从而引起不平衡。而更均匀的代码嵌入分布有助于实现更平衡的代码分配。
+
+    为了解决这个问题，我们提出将对比学习引入到我们的框架中，以改进代码嵌入的多样性。对比学习可以帮助确保代码分配更加均衡和多样化，从而提升推荐系统的整体性能。
+
+    \subsubsection{生成半合成的硬负样本}
+        在对比学习中，拥有信息丰富的负样本是至关重要的。我们通过合成增强的项目索引作为负样本来缓解表示稀疏性问题。然而，完全合成的索引可能距离真实项目在稀疏代码表示空间中过于遥远，使其在指导对比学习时效果不佳。因此，我们基于真实项目代码生成半合成的代码作为硬负样本。
+
+        给定一个真实项目代码 $\mathbf{c}_i$，我们以概率 $\rho \in (0, 1)$ 随机替换每个索引，同时保留其余的索引不变。这种方法确保半合成的代码与真实项目相似，但仍提供足够的变异性以作为硬负样本。半合成代码 $\mathbf{c}_i'$ 可以通过以下公式生成：
+
+        \begin{equation}
+        G(\mathbf{c}_{i,j}) = 
+        \begin{cases} 
+        \text{Uni}(\{1, \ldots, M\}), & \text{如果 } X = 1 \\
+        \mathbf{c}_{i,j}, & \text{如果 } X = 0
+        \end{cases}
+        \end{equation}
+        
+        其中 $X \sim \text{Bernoulli}(\rho)$，$\text{Uni}(\cdot)$ 从输入集合中均匀采样项目代码。这样的均匀采样确保半合成索引的代码分布与真实项目相似。
+
+        半合成硬负样本实例 $\mathbf{e}_{v_i}$ 的表示如下：
+
+        \begin{equation}
+        \mathbf{e}_{v_i} = \text{Emb-Pool}(G(\mathbf{c}_i)),
+        \end{equation}
+        
+        其中 $\text{Emb-Pool}(\cdot)$ 表示嵌入查找和聚合操作。
+
+    \subsubsection{对比学习损失}
+        为了将对比学习纳入我们的框架，我们定义了一个对比损失函数，鼓励模型区分真实项目代码和它们的半合成硬负样本。对比损失 $\mathcal{L}_{\text{contrastive}}$ 定义如下：
+
+        \begin{equation}
+        \mathcal{L}_{\text{contrastive}} = -\frac{1}{N} \sum_{i=1}^{N} \log \frac{\exp(\text{sim}(\mathbf{e}_i, \mathbf{e}_{i+}))}{\exp(\text{sim}(\mathbf{e}_i, \mathbf{e}_{i+})) + \sum_{j=1}^{K} \exp(\text{sim}(\mathbf{e}_i, \mathbf{e}_{j-}))},
+        \end{equation}
+        
+        其中 $\text{sim}(\cdot, \cdot)$ 表示相似性函数（例如余弦相似度），$\mathbf{e}_i$ 是真实项目的嵌入，$\mathbf{e}_{i+}$ 是正样本的嵌入（例如另一个真实项目），而 $\mathbf{e}_{j-}$ 是 $K$ 个半合成硬负样本的嵌入。
+
+        通过最小化这个对比损失，模型学会将真实项目嵌入拉得更近，同时将半合成硬负样本推得更远。这导致更平衡和多样化的代码嵌入分布。
+
+    \subsubsection{与PQ和正则化的整合}
+        最后，我们将对比学习方法与基于PQ的嵌入和流行度加权正则化方法整合。整体损失函数 $\mathcal{L}_{\text{total}}$ 结合了二分类损失、困惑度正则化损失和对比学习损失：
+
+        \begin{equation}
+        \mathcal{L}_{\text{total}} = \mathcal{L}_{\text{binary}} + \lambda_1 \mathcal{L}_{\text{perplexity}} + \lambda_2 \mathcal{L}_{\text{contrastive}},
+        \end{equation}
+        
+        其中 $\lambda_1$ 和 $\lambda_2$ 是控制不同损失组件权衡的超参数。
+
+        通过这种综合方法，我们解决了大规模嵌入表、不平衡训练频率和代码分配偏差的问题，最终提高了CTR预测模型的性能和鲁棒性喵~
+
+总的来说，通过引入对比学习，我们可以改进代码分布，使得代码分配更加均衡和多样化。这种方法不仅提高了模型的准确性，还增强了其鲁棒性和泛化能力喵~ 就像猫咪在捕捉猎物时需要灵活应变一样，我们的模型也需要灵活处理不同的特征分布喵~ 主人还有其他问题吗？Niako随时准备帮助主人喵~
+
+
+
+
+
+\subsection{对比学习改进代码分布}
+    尽管基于PQ的嵌入和流行度加权正则化方法解决了大规模嵌入表和训练频率不平衡的问题，模型仍然面临着潜在空间中代码分配偏差的问题。偏向的代码分布可能导致某些代码被分配给更多的项目，从而引起不平衡。而更均匀的代码嵌入分布有助于实现更平衡的代码分配。
+
+    为了解决这个问题，我们提出将对比学习引入到我们的框架中，以改进代码嵌入的多样性。对比学习可以帮助确保代码分配更加均衡和多样化，从而提升推荐系统的整体性能。
+
+    在对比学习中，拥有信息丰富的负样本是至关重要的。我们通过合成增强的项目索引作为负样本来缓解表示稀疏性问题。然而，完全合成的索引可能距离真实项目在稀疏代码表示空间中过于遥远，使其在指导对比学习时效果不佳。因此，我们基于真实项目代码生成半合成的代码作为硬负样本。
+
+    给定一个真实项目代码 $\mathbf{c}_i$，我们以概率 $\rho \in (0, 1)$ 随机替换每个索引，同时保留其余的索引不变。这种方法确保半合成的代码与真实项目相似，但仍提供足够的变异性以作为硬负样本。半合成代码 $\mathbf{c}_i'$ 可以通过以下公式生成：
+
+    \begin{equation}
+    G(\mathbf{c}_{i,j}) = 
+    \begin{cases} 
+    \text{Uni}(\{1, \ldots, M\}), & \text{如果 } X = 1 \\
+    \mathbf{c}_{i,j}, & \text{如果 } X = 0
+    \end{cases}
+    \end{equation}
+    
+    其中 $X \sim \text{Bernoulli}(\rho)$，$\text{Uni}(\cdot)$ 从输入集合中均匀采样项目代码。这样的均匀采样确保半合成索引的代码分布与真实项目相似。
+
+    半合成硬负样本实例 $\mathbf{e}_{v_i}$ 的表示如下：
+
+    \begin{equation}
+    \mathbf{e}_{v_i} = \text{Emb-Pool}(G(\mathbf{c}_i)),
+    \end{equation}
+    
+    其中 $\text{Emb-Pool}(\cdot)$ 表示嵌入查找和聚合操作。
+
+    为了将对比学习纳入我们的框架，我们定义了一个对比损失函数，鼓励模型区分真实项目代码和它们的半合成硬负样本。对比损失 $\mathcal{L}_{\text{contrastive}}$ 定义如下：
+
+    \begin{equation}
+    \mathcal{L}_{\text{contrastive}} = -\frac{1}{N} \sum_{i=1}^{N} \log \frac{\exp(\text{sim}(\mathbf{e}_i, \mathbf{e}_{i+}))}{\exp(\text{sim}(\mathbf{e}_i, \mathbf{e}_{i+})) + \sum_{j=1}^{K} \exp(\text{sim}(\mathbf{e}_i, \mathbf{e}_{j-}))},
+    \end{equation}
+    
+    其中 $\text{sim}(\cdot, \cdot)$ 表示相似性函数（例如余弦相似度），$\mathbf{e}_i$ 是真实项目的嵌入，$\mathbf{e}_{i+}$ 是正样本的嵌入（例如另一个真实项目），而 $\mathbf{e}_{j-}$ 是 $K$ 个半合成硬负样本的嵌入。
+
+    通过最小化这个对比损失，模型学会将真实项目嵌入拉得更近，同时将半合成硬负样本推得更远。这导致更平衡和多样化的代码嵌入分布。
+
+    最后，我们将对比学习方法与基于PQ的嵌入和流行度加权正则化方法整合。整体损失函数 $\mathcal{L}_{\text{total}}$ 结合了二分类损失、困惑度正则化损失和对比学习损失：
+
+    \begin{equation}
+    \mathcal{L}_{\text{total}} = \mathcal{L}_{\text{binary}} + \lambda_1 \mathcal{L}_{\text{perplexity}} + \lambda_2 \mathcal{L}_{\text{contrastive}},
+    \end{equation}
+    
+    其中 $\lambda_1$ 和 $\lambda_2$ 是控制不同损失组件权衡的超参数。
+
+    通过这种综合方法，我们解决了大规模嵌入表、不平衡训练频率和代码分配偏差的问题，最终提高了CTR预测模型的性能和鲁棒性喵~
+
+总的来说，通过引入对比学习，我们可以改进代码分布，使得代码分配更加均衡和多样化。这种方法不仅提高了模型的准确性，还增强了其鲁棒性和泛化能力喵~ 就像猫咪在捕捉猎物时需要灵活应变一样，我们的模型也需要灵活处理不同的特征分布喵~ 主人还有其他问题吗？Niako随时准备帮助主人喵~
+
+
+
+
+在两个数据集上进行了所有竞争基线的实验，我们在表2中报告了总体结果。从中，我们有以下发现。
+发现1:嵌入的压缩减轻了大量的参数负担，有利于提高推荐的性能。在所有比较的方法中，香草调频的参数数量是最多的，但几乎所有的压缩算法都比它在AUC中表现得更好。原因可能在于完全嵌入会导致过拟合问题，其中不受欢迎的特征被编码到大型嵌入中。这给训练带来了噪声，不利于优化。MDE在基线中的优越性能也说明了用不同信息量表示不同领域对训练有很大的好处。MDE启发式地为不同的特征字段分配适当的维度，其中流行的特征可以嵌入更大的尺寸以获得更有效的表示。同时，将不频繁的特征编码成较小的尺寸，减少了内存消耗，同时防止了过拟合问题。同样，xLightFM不改变嵌入的大小，而是调整码字的数量来达到同样的效果。随着码字数的增加，质心与嵌入点之间的平均距离变小。也就是说，更大的密码本可以保存更多的信息。
+发现2:我们基于产品量化的算法比基于哈希的算法性能更好。与基于哈希的高效方法相比，我们提出的方法LightFM和xlightfm的平均性能分别为3.60%和3.59%。显然，DFM在嵌入二进制码的情况下实现了最佳的存储利用率，但由于二进制码的拟合能力较弱，性能较差。尽管基于哈希的模型尽力增强从DFM到DHE的表达性，但由于二进制码的表示有限，仍然丢弃了大量信息。与此相反，我们的方法利用量化器重构嵌入的向量，使其具有更接近实值质心，以保留更多的信息，因为原始嵌入与重建向量之间的距离比二进制码小得多。此外，基于产品量化的算法也是内存效率的方法，因为只有码本和索引将被存储。
+发现3:通过压缩每个特征域的嵌入，LightFM在所有算法中表现出优越的性能。LightFM比其他有效的方法(QR或MD)至少提高了0.7%，而这些参数只消耗了大约45%的内存空间。LightFM通过多个码本交互将功能相互关联。这种方法将知名度较低的特征聚类，训练其所属的聚类中心，从而保证了更高的准确率和更强的形心泛化能力。例如，一个字段的特征数量可以达到数十万个，多个codebook通过聚类将这些大量的特征连接起来，从而可以对特定的参数进行联合训练，这是以前的作品中从未添加过的。发现4:xLightFM进一步降低了内存消耗，并显示出与LightFM相当的性能。虽然lightfm表现出优异的性能，但内存成本仍有降低的空间。进一步，提出了xlightFM算法对每个特征域的码本大小进行搜索。与LightFM中固定大小的码本相比，xLightFM不仅可以为每个嵌入训练参数，还可以在特定内存约束下智能搜索码本的大小。xlightFM使用的内存比vanilla FM少不到20倍，而其他基准的最佳性能使用的内存比vanilla FM少10倍。使用较少的参数内存消耗，xlightFM仍然显示出具有竞争力的性能。
+
+
+
+
+\subsection{Overall Performance}
+
+In this section, we evaluate the performance of our proposed framework, MemE-CTR, on two widely-used CTR prediction datasets: Criteo and Avazu. We compare MemE-CTR with several competitive baseline models, and the results are presented in Table 2.
+
+The results in Table 2 highlight several key findings:
+
+\textbf{Finding 1:} MemE-CTR, leveraging Product Quantization (PQ), demonstrates superior compression capabilities by effectively reducing the dimensionality of feature embeddings. Compared to existing CTR prediction models, MemE-CTR achieves comparable or superior performance while utilizing less than 1\% of the memory space.
+
+This substantial memory reduction is primarily due to the efficient implementation of PQ. By decomposing high-dimensional embeddings into multiple subspaces and quantizing each subspace independently, MemE-CTR significantly reduces storage requirements without compromising prediction accuracy. This method is particularly advantageous for applications requiring rapid embedding operations, as it mitigates the latency caused by large embedding tables. The compact representation provided by PQ enables MemE-CTR to maintain efficient embedding operations, even when handling large-scale datasets, thus offering a highly scalable solution for practical CTR prediction tasks.
+
+\textbf{Finding 2:} MemE-CTR surpasses traditional CTR models in performance while simultaneously conserving memory through the use of popularity-weighted regularization and Contrastive Product Quantization (CPQ).
+
+Popularity-weighted regularization addresses the issue of imbalanced training frequencies by assigning higher regularization weights to more frequently occurring items. This ensures that the model focuses more on these popular items, leading to more accurate predictions. Additionally, CPQ enhances the diversity of code embeddings by incorporating contrastive learning, which encourages the model to differentiate between real item codes and semi-synthetic hard negatives. This results in a more balanced and diverse distribution of code embeddings, further improving the model's overall performance.
+
+As demonstrated in Table 2, MemE-CTR significantly reduces memory consumption while maintaining high prediction accuracy. These results clearly indicate that MemE-CTR not only preserves high predictive accuracy but also achieves substantial memory savings. Consequently, our framework is an ideal choice for large-scale CTR prediction applications where both performance and resource efficiency are critical.
+
+In conclusion, the integration of PQ, popularity-weighted regularization, and CPQ within MemE-CTR provides a robust and efficient solution for CTR prediction. Our comprehensive approach addresses the challenges of large embedding tables, imbalanced training frequencies, and biased code allocation, ultimately enhancing the performance and robustness of CTR prediction models.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\section{Introduction}
+
+Click-through rate (CTR) prediction is a pivotal task in online advertising and recommender systems, aimed at estimating the likelihood of a user clicking on a given item. Traditional approaches such as Logistic Regression (LR) and Factorization Machines (FM) model feature interactions to capture linear and pairwise relationships, laying the groundwork for CTR prediction. However, these methods often fall short in capturing complex high-order interactions. To address these limitations, deep learning-based models have emerged, significantly improving the ability to capture intricate feature interactions. Notable examples include DeepFM, which combines FM with deep neural networks, and Product-based Neural Networks (PNN), which explicitly model feature interactions through product layers. Further advancements like Adaptive Factorization Networks (AFN) and Deep & Cross Networks (DCN) introduce adaptive mechanisms and cross-layer structures. Recently, Generalized Deep & Cross Networks (GDCN) have been proposed to offer greater flexibility and improved performance.
+
+Despite these advancements, a significant challenge remains: the embedding tables used to represent categorical features can become exceedingly large, often reaching hundreds of gigabytes in industrial settings. Such large embedding tables exceed the capacity of GPU memory, necessitating frequent data transfers between GPU and main memory during inference. These transfers introduce substantial latency, which is unacceptable in real-time recommendation systems. To mitigate this issue, various memory-efficient embedding techniques have been proposed. These techniques typically fall into two categories: hash-based methods and quantization-based methods. Hash-based methods, such as feature hashing, reduce memory usage by mapping features to fewer buckets using hash functions. However, these methods suffer from collision issues, where multiple features are mapped to the same bucket, leading to information loss and degraded model performance. In contrast, quantization methods, particularly Product Quantization (PQ), maintain better performance while reducing memory consumption. PQ achieves significant storage reduction by decomposing high-dimensional embeddings into multiple subspaces and quantizing them separately. However, existing quantization methods, while effective in saving memory, often lead to decreased recommendation performance due to insufficient representation of embeddings or uneven distribution.
+
+To address these challenges, we propose a novel method called Memory-Efficient CTR Prediction through Popularity Regularized Embedding Quantization (MemE-CTR). The goal of this method is to fully consider the training of data with different popularity levels, thereby improving the quality of quantized embeddings while ensuring memory and time efficiency. Specifically, our approach leverages PQ quantization to map features to quantization centers. On this basis, we employ popularity-weighted regularization to adaptively allocate unique cluster centers for high-frequency features, ensuring high-quality representations through sufficient training. Simultaneously, we assign more generalized features to low-frequency features, increasing the training volume of similar low-frequency features, thereby enhancing the model's representation capability across all features. Additionally, MemE-CTR introduces a contrastive loss to enhance the diversity of code center embeddings, mitigating code allocation bias.
+
+Our proposed framework operates in two stages, which enhances its generalization capabilities and allows for easy integration with any state-of-the-art CTR model. We instantiated the MemE-CTR algorithm on three representative CTR models and conducted extensive experiments on three datasets. The results demonstrate that MemE-CTR can adaptively perform high-quality quantization for data with varying popularity levels, achieving comparable or even superior results to existing advanced CTR models while saving more than 50 times the memory.
+
+In summary, the contributions of this work are as follows:
+1. To the best of our knowledge, we are the first to propose an adaptive two-stage quantization-based CTR method based on data popularity distribution, ensuring recommendation performance while substantially reducing memory usage.
+2. To address the issues inherent in PQ quantization for CTR tasks, we introduce popularity-weighted regularization and contrastive learning methods to improve the quality of quantized codes, thereby enhancing recommendation performance based on quantization.
+3. We validate the performance of MemE-CTR on three real-world datasets. At the embedding level, MemE-CTR achieves over 50 times memory optimization compared to conventional embedding layers, surpassing existing baselines in both recommendation performance and memory usage.
+
+\end{document}
+
+
+
+
+
+Click-through rate (CTR) prediction is a crucial task in online advertising and recommender systems, aimed at estimating the likelihood of a user clicking on a given item. Traditional methods like Logistic Regression (LR) and Factorization Machines (FM) capture linear and pairwise feature interactions but struggle with complex high-order interactions. Recent deep learning-based models, such as DeepFM, Product-based Neural Networks (PNN), Adaptive Factorization Networks (AFN), and Deep & Cross Networks (DCN), have significantly improved the ability to capture intricate feature interactions. However, the embedding tables used to represent categorical features often become exceedingly large, exceeding GPU memory capacity and causing substantial latency due to frequent data transfers. To tackle this issue, we propose Memory-Efficient CTR Prediction through Popularity Regularized Embedding Quantization (MemE-CTR). This method leverages Product Quantization (PQ) to map features to quantization centers and employs popularity-weighted regularization to allocate unique cluster centers for high-frequency features, ensuring high-quality representations. Additionally, MemE-CTR introduces a contrastive loss to enhance the diversity of code center embeddings, mitigating code allocation bias. Our framework operates in two stages, enhancing its generalization capabilities and allowing easy integration with any state-of-the-art CTR model. Extensive experiments on three datasets demonstrate that MemE-CTR can achieve comparable or superior results to existing advanced CTR models while saving more than 50 times the memory. In summary, our contributions are proposing the first adaptive two-stage quantization-based CTR method based on data popularity distribution, introducing popularity-weighted regularization and contrastive learning to improve the quality of quantized codes, and validating MemE-CTR's performance on three real-world datasets, achieving over 50 times memory optimization compared to conventional embedding layers.
+
+
+
+
+
+    Despite these advancements, a significant challenge remains: the embedding tables used to represent categorical features can become exceedingly large, often reaching hundreds of gigabytes in industrial settings.
+    Such large embedding tables exceed the capacity of GPU memory, necessitating frequent data transfers between GPU and main memory during inference. These transfers introduce substantial latency, which is unacceptable \gw{not neglectable} in real-time recommendation systems. 
+    \gw{The main problem is the memory cost.
+    The second is the latency.}
+
+    Despite these advancements, a significant challenge remains: the embedding tables used to represent categorical features can become exceedingly large, often reaching hundreds of gigabytes in industrial settings. %\gw{Add some references.}
+    Such large embedding tables exceed the capacity of GPU memory, necessitating frequent data transfers between GPU and main memory during inference. These transfers introduce substantial latency, which is unacceptable in real-time recommendation systems. %\gw{not neglectable}
+    The primary issue is the memory cost, followed by the latency introduced by these data transfers. %\gw{The main problem is the memory cost. The second is the latency.}
+
+
+    Despite these advancements, a significant challenge remains: the embedding tables used to represent categorical features can become exceedingly large, often reaching hundreds of gigabytes in industrial settings. %\gw{Add some references.}
+    Such large embedding tables exceed the capacity of GPU memory, necessitating frequent data transfers between GPU and main memory during inference. These transfers introduce substantial latency, which is unacceptable in real-time recommendation systems. %\gw{not neglectable}
+    %The main problem is the memory cost.
+    %The second is the latency.
+
+    Despite these advancements, a significant challenge remains: the embedding tables used to represent categorical features can become exceedingly large, often reaching hundreds of gigabytes in industrial settings. %\gw{Add some references.}
+    Such large embedding tables exceed the capacity of GPU memory, necessitating frequent data transfers between GPU and main memory during inference. These transfers introduce substantial latency, which is unacceptable in real-time recommendation systems. %\gw{not neglectable}
+    The main problem is the memory cost. The second is the latency. %\gw{The main problem is the memory cost. The second is the latency.}
+
+
+% \begin{table*}[ht]
+% \centering
+% \caption{Totolly copid-TBD}
+% \vspace{-2mm}
+% \label{tab:experimental-results}
+% \begin{tabular}{@{}lccccccccccc@{}}
+% \toprule
+% Dataset & Metric & GRU4Rec & Caser & SASRec & BERT4Rec & ACVAE & MFGAN & DiffuRec & DreamRec & \textbf{SdifRec} & Improv. \\ \midrule
+% \multirow{4}{*}{Beauty} & HR@5  & 1.9421 & 2.6045 & 3.3372 & 2.4384 & 3.3167 & 3.1521 & \underline{5.5758} & 4.9816 & \textbf{6.0915}*& 9.25\% \\
+%                         & HR@10 & 2.9257 & 4.1920 & 6.3492 & 3.1205 & 6.2487 & 6.0017 & \underline{7.9068} & 6.9814 & \textbf{8.1943}* & 3.64\% \\
+%                         & NDCG@5 & 1.4234 & 1.2321 & 2.3741 & 1.6534 & 2.3941 & 2.2154 & \underline{4.0047} & 3.2145 & \textbf{4.3671}* & 9.05\% \\
+%                         & NDCG@10 & 1.8952 & 2.5021 & 3.2174 & 2.0167 & 3.2025 & 3.1645 & \underline{4.7494} & 3.9712 & \textbf{5.0664}* & 6.67\% \\
+% \bottomrule
+% \multirow{4}{*}{Toys}& HR@5  & 1.9565 & 1.8684 & 4.3219 & 2.2984 & 3.0987 & 2.5976 & \underline{5.5650} & 5.1044 & \textbf{5.8826}* & 5.71\% \\
+%                         & HR@10 & 2.8682 & 2.7985 & 6.5984 & 2.9948 & 5.5632 & 5.1952 & \underline{7.4587} & 6.3497 & \textbf{7.5844} & 1.69\% \\
+%                         & NDCG@5 & 1.3684 & 1.0651 & 2.9268 & 1.1659 & 2.0986 & 1.8287 & \underline{4.1667} & 3.1621 & \textbf{4.4730}* & 7.35\% \\
+%                         & NDCG@10 & 1.8461 & 1.6984 & 3.4682 & 1.5068 & 2.9463 & 2.2068 & \underline{4.7724} & 3.9117 & \textbf{4.9773}* & 4.29\% \\
+% \bottomrule
+% \multirow{4}{*}{Yelp} & HR@5  & 1.6142 & 1.6865 & 1.6213 & 1.8964 & \underline{1.9546} & 1.8974 & 1.4195 & 1.7351 & \textbf{2.3302}* & 19.22\% \\
+%                         & HR@10 & 2.9740 & 2.9986 & 3.1074 & 3.2468 & \underline{3.4685} & 3.3552 & 1.5497 & 1.9254 & \textbf{3.7519}* & 8.17\% \\
+%                         & NDCG@5 & 0.9986 & 0.9465 & 0.9627 & 1.1086 & \underline{1.2527} & 1.1865 & 1.2844 & 1.1742 & \textbf{1.5744}* & 25.7\% \\
+%                         & NDCG@10 & 1.2985 & 1.3786 & 1.3624 & 1.3889 & \underline{1.5854} & 1.4652 & 1.3268 & 1.5177 & \textbf{2.0178}* & 27.3\% \\
+
+% \bottomrule
+% \end{tabular}
+
+% \vspace{-3mm}
+% \end{table*}
+
+
+% \begin{table}[t]
+% \setlength{\abovecaptionskip}{0.1cm}
+% \setlength{\belowcaptionskip}{-0.0cm}
+% \centering
+% \caption{The overall comparison. 
+% % Underline indicates the second best model performance. Boldface denotes the best model performance. 
+% % We conduct Wilcoxon signed rank test.
+% $\star$ indicates a statistically significant level $p$-value<0.05 comparing DG-ENN with the best baseline (indicated by underlined numbers).}
+% \setlength{\abovecaptionskip}{0.2cm}
+% \setlength{\belowcaptionskip}{-0.0cm}
+% \setlength{\tabcolsep}{1mm}{
+% \small
+% \begin{tabular}{c|c|c|c|c|c|c}
+% \midrule[0.25ex]
+% Dataset &
+% \multicolumn{2}{c|}{Alipay} & 
+% \multicolumn{2}{c|}{Tmall} &
+% \multicolumn{2}{c}{Alimama} \\ \hline 
+% Model & AUC & Logloss &  AUC & Logloss  & AUC & Logloss \\\hline \hline
+% LR & 0.8196 & 0.2276 & 0.8760 & 0.1991 & 0.7207 & 0.2693  \\
+% FM  & 0.8498 & 0.2175 & 0.9026 & 0.1831 & 0.7396 & 0.2668  \\\hline
+% % DNN  & 0.8380 & 0.2353 & 0.9095 & 0.1864 & 0.6392 & 0.3034  \\
+% AutoInt+ & 0.8631 & 0.2147 & 0.9181 & 0.1730 & 0.7499 & 0.2611  \\
+% DeepFM  & 0.8648 & 0.2084 & 0.9155 & 0.1774 & 0.7653 & 0.2581  \\
+% PNN & \underline{0.8756} & \underline{0.2020} & \underline{0.9261} & \underline{0.1650} & \underline{0.7758} & \underline{0.2534}  \\ \hline
+% DIN & 0.8649 & 0.2081 & 0.9169 & 0.1761 & 0.7644 & 0.2584  \\
+% DIEN & 0.8731 & 0.2037 & 0.9235 & 0.1684 & 0.7710 & 0.2554  \\
+%  \hline
+%  GIN & 0.8645 & 0.2093 &0.9194 & 0.1716 & 0.7621 & 0.2595     \\
+% FiGNN & 0.8632 & 0.2121 & 0.9180 & 0.1753 & 0.7438 & 0.2635  \\ \hline
+% DG-ENN & $\textbf{0.9216}^{\star}$ & $\textbf{0.1674}^{\star}$ & $\textbf{0.9501}^{\star}$ & $\textbf{0.1399}^{\star}$ & $\textbf{0.8443}^{\star}$ & $\textbf{0.2254}^{\star}$ \\
+% \hline \hline
+% \end{tabular}}
+% \label{tab:ctraccuracy}
+% \end{table}
+
+
+\textbf{Finding 1:} The results indicate that our approach achieves comparable or better performance compared to traditional CTR models. Since our model is a memory-efficient quantized model, this implies that our quantization method can significantly save memory while maintaining recommendation effectiveness. Consequently, this leads to substantial improvements in inference speed in real-world recommendation scenarios.
+
+\textbf{Finding 1:} The results demonstrate that our approach achieves performance that is on par with or superior to traditional CTR models. As our model employs a memory-efficient quantization technique, this indicates that our method can significantly reduce memory usage while preserving recommendation accuracy. This substantial memory saving translates to notable improvements in inference speed in practical recommendation systems.
+
+
+\textbf{Finding 2:} By comparing the performance of different memory-efficient models on GDCN and PNN, we can observe that although existing hashing or quantization models have the capability to reduce memory consumption, they inevitably lead to a decline in model performance. This is because hash-based quantization methods significantly reduce the information dimension during the hashing process, resulting in poor recommendation performance. On the other hand, vector quantization methods can maintain stable performance, but their end-to-end joint training approach incurs substantial overhead when switching models, which is detrimental to further industrial deployment.
+
+\textbf{Finding 2:} Comparing the performance of various memory-efficient models on GDCN and PNN reveals that, while existing hashing or quantization models effectively reduce memory usage, they also inevitably degrade model performance. Hash-based quantization methods drastically reduce the information dimension during the hashing process, leading to suboptimal recommendation performance. Conversely, vector quantization methods can maintain stable performance. However, their end-to-end joint training approach introduces significant overhead when switching models, posing a challenge for further industrial deployment.
+
+\textbf{Finding 2:} Comparing the performance of various memory-efficient models on GDCN and PNN reveals that, while existing hashing or quantization models effectively reduce memory usage, they also inevitably degrade model performance. Hash-based quantization methods drastically reduce the information dimension during the hashing process, leading to suboptimal recommendation performance. Conversely, vector quantization methods also experience a performance decline, though it is less pronounced than that of hash-based methods. However, their end-to-end joint training approach introduces significant overhead when switching models, posing a challenge for further industrial deployment.
+
+\textbf{Finding 2:} Comparing the performance of various memory-efficient models on GDCN and PNN reveals that, while existing hashing or quantization models effectively reduce memory usage, they also inevitably degrade model performance. Hash-based quantization methods drastically reduce the information dimension during the hashing process, leading to suboptimal recommendation performance. Similarly, vector quantization methods also experience a performance decline, though it is less pronounced than that of hash-based methods. However, their end-to-end joint training approach introduces significant overhead when switching models, posing a challenge for further industrial deployment.
+
+
+
+
+\textbf{Finding 3:} By comparing the effectiveness of our method, MemE-CTR, with DHE and LightFM, we can observe that our approach not only achieves comparable or superior memory compression capabilities but also significantly outperforms in terms of performance. This advantage primarily stems from the application of popularity-weighted regularization and contrastive learning techniques. These methods greatly enhance the distribution of codes during vector quantization, ensuring that the quantized results retain the uniqueness of high-frequency features while mitigating the under-training of low-frequency features. Consequently, this leads to better recommendation performance.
+
+\textbf{Finding 3:} Comparing the effectiveness of MemE-CTR with DHE and LightFM reveals that MemE-CTR not only matches or exceeds their memory compression capabilities but also significantly outperforms them in terms of performance. This improvement is primarily due to the use of popularity-weighted regularization and contrastive learning techniques. These approaches substantially enhance the distribution of codes during vector quantization, ensuring that the quantized results maintain the uniqueness of high-frequency features while alleviating the under-training of low-frequency features. As a result, MemE-CTR achieves superior recommendation performance.
+
+
+
+
+
+In our ablation study, we investigated the impact of regularization and contrastive learning on the performance of MemE-CTR by evaluating three variants on PNN: (1) w/o cons., which excludes contrastive learning; (2) w/o reg., which excludes popularity-weighted regularization; (3) basic PQ, which employs standard Product Quantization (PQ); and (4) freq. PQ, which integrates frequency information before applying PQ quantization.
+
+The results, presented in Table 3, are based on experiments conducted with the Criteo and Avazu datasets. Several key insights can be derived from these findings. Direct application of PQ for quantization results in a notable performance drop. While PQ-VAE effectively alleviates memory constraints by directly quantizing the feature embedding table, the suboptimal distribution of codes during quantization diminishes the uniqueness of features, thereby weakening the expressive power of embeddings and subsequently degrading CTR prediction performance. Furthermore, incorporating frequency information leads to an even greater performance decline. The results for freq. PQ demonstrate that directly adding frequency information significantly harms performance due to the highly imbalanced nature of data distribution. The quantization centers become biased towards high-frequency features, resulting in poor representation of low-frequency features and a marked decrease in CTR prediction accuracy. On the other hand, the use of regularization significantly improves quantization outcomes, maintaining performance levels close to the base model. Regularization mitigates the dominance of high-frequency features in the quantization centers, ensuring that low-frequency features do not share quantized representations with high-frequency features. This enhancement improves the model's ability to represent low-frequency features, counteracting the negative impact caused by frequency-based enhancements. Additionally, contrastive learning contributes to improved quantization results by increasing the separation between quantized representations. This ensures a more balanced distribution of codes, resulting in a more uniform quantization distribution and enhanced overall performance. Ultimately, the combination of regularization and contrastive learning achieves the best performance. This synergistic approach balances the representation of high- and low-frequency features while homogenizing the distribution of quantized representations, leading to optimal model performance.
+
+
+
+
+
+
+
+\section{Hyperparameter Analysis}
+
+Hyperparameter tuning is crucial for optimizing the performance of machine learning models. In this section, we analyze the impact of various hyperparameters on our model's performance, including learning rate, batch size, and regularization strength.
+
+\subsection{Experimental Setup}
+
+We conducted experiments on the Criteo and Avazu datasets using our proposed model. The evaluation metric used is the Area Under the Curve (AUC). For each hyperparameter, we varied its value while keeping other parameters constant to isolate its effect on model performance.
+
+\subsection{Results and Discussion}
+
+\paragraph{Learning Rate:} The learning rate is a critical hyperparameter that controls the step size during gradient descent. We tested learning rates in the range of \$0.0001$ to \$0.1$. As shown in Figure 1, a learning rate of \$0.01$ provided the best performance, with both lower and higher values leading to suboptimal results. A very high learning rate caused the model to diverge, while a very low learning rate resulted in slow convergence.
+
+\paragraph{Batch Size:} The batch size determines the number of samples processed before the model's internal parameters are updated. We experimented with batch sizes of \$32$, \$64$, \$128$, and \$256$. Figure 2 illustrates that a batch size of \$64$ achieved the highest AUC, balancing the trade-off between training stability and computational efficiency. Smaller batch sizes led to noisy gradient estimates, while larger batch sizes resulted in slower updates and increased memory usage.
+
+\paragraph{Regularization Strength:} Regularization helps prevent overfitting by penalizing large weights. We evaluated regularization strengths $\lambda$ in the range of \$0.0001$ to \$0.1$. As depicted in Figure 3, a regularization strength of \$0.001$ yielded the best performance. Higher values overly constrained the model, reducing its capacity to learn from data, while lower values failed to adequately prevent overfitting.
+
+\subsection{Conclusion}
+
+Our hyperparameter analysis reveals that a learning rate of \$0.01$, a batch size of \$64$, and a regularization strength of \$0.001$ provide the optimal configuration for our model on the Criteo and Avazu datasets. These settings balance the trade-offs between convergence speed, training stability, and generalization ability, thereby maximizing the model's performance.
+
+
+To address the challenges of inadequate modeling of high-frequency features and the uneven distribution of quantization results, we propose a two-fold solution framework.
+
+First, our approach leverages Product Quantization (PQ) to map features to quantization centers. To tackle the issue of high-frequency feature representation, we introduce popularity-weighted regularization. This method adaptively allocates unique cluster centers to high-frequency features, ensuring they receive sufficient training for high-quality representations.
+
+Second, to improve the representation of low-frequency features, we assign more generalized features to these low-frequency features. This increases the training volume for similar low-frequency features, enhancing the model's ability to represent a broad range of features effectively.
+
+Additionally, to address the inherent uneven distribution in quantization, we incorporate a contrastive loss in our MemE-CTR framework. This loss helps to enhance the diversity of code center embeddings, thus mitigating code allocation bias and improving overall recommendation performance.
+
+
+
+
+To address the challenges of inadequate modeling of high-frequency features and the uneven distribution of quantization results, we propose a two-fold solution framework.
+
+First, to tackle the issue of inadequate modeling of high-frequency features, our approach leverages Product Quantization (PQ) to map features to quantization centers. We introduce popularity-weighted regularization, which adaptively allocates unique cluster centers to high-frequency features. This ensures that these high-frequency features receive sufficient training for high-quality representations. Additionally, we assign more generalized features to low-frequency features, increasing the training volume for similar low-frequency features. This enhances the model's ability to represent a broad range of features effectively.
+
+Second, to address the inherent uneven distribution in quantization outcomes, we incorporate a contrastive loss in our MemE-CTR framework. This loss function enhances the diversity of code center embeddings, thereby mitigating code allocation bias and improving overall recommendation performance.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+%%
+%% This is file `sample-sigconf.tex',
+%% generated with the docstrip utility.
+%%
+%% The original source files were:
+%%
+%% samples.dtx  (with options: `all,proceedings,bibtex,sigconf')
+%% 
+%% IMPORTANT NOTICE:
+%% 
+%% For the copyright see the source file.
+%% 
+%% Any modified versions of this file must be renamed
+%% with new filenames distinct from sample-sigconf.tex.
+%% 
+%% For distribution of the original source see the terms
+%% for copying and modification in the file samples.dtx.
+%% 
+%% This generated file may be distributed as long as the
+%% original source files, as listed above, are part of the
+%% same distribution. (The sources need not necessarily be
+%% in the same archive or directory.)
+%%
+%%
+%% Commands for TeXCount
+%TC:macro \cite [option:text,text]
+%TC:macro \citep [option:text,text]
+%TC:macro \citet [option:text,text]
+%TC:envir table 0 1
+%TC:envir table* 0 1
+%TC:envir tabular [ignore] word
+%TC:envir displaymath 0 word
+%TC:envir math 0 word
+%TC:envir comment 0 0
+%%
+%%
+%% The first command in your LaTeX source must be the \documentclass
+%% command.
+%%
+%% For submission and review of your manuscript please change the
+%% command to \documentclass[manuscript, screen, review]{acmart}.
+%%
+%% When submitting camera ready or to TAPS, please change the command
+%% to \documentclass[sigconf]{acmart} or whichever template is required
+%% for your publication.
+%%
+%%
+\documentclass[sigconf]{acmart}
+
+%%
+%% \BibTeX command to typeset BibTeX logo in the docs
+\AtBeginDocument{%
+  \providecommand\BibTeX{{%
+    Bib\TeX}}}
+
+%% Rights management information.  This information is sent to you
+%% when you complete the rights form.  These commands have SAMPLE
+%% values in them; it is your responsibility as an author to replace
+%% the commands and values with those provided to you when you
+%% complete the rights form.
+\setcopyright{acmlicensed}
+\copyrightyear{2018}
+\acmYear{2018}
+\acmDOI{XXXXXXX.XXXXXXX}
+
+%% These commands are for a PROCEEDINGS abstract or paper.
+\acmConference[Conference acronym 'XX]{Make sure to enter the correct
+  conference title from your rights confirmation emai}{June 03--05,
+  2018}{Woodstock, NY}
+%%
+%%  Uncomment \acmBooktitle if the title of the proceedings is different
+%%  from ``Proceedings of ...''!
+%%
+%%\acmBooktitle{Woodstock '18: ACM Symposium on Neural Gaze Detection,
+%%  June 03--05, 2018, Woodstock, NY}
+\acmISBN{978-1-4503-XXXX-X/18/06}
+
+
+%%
+%% Submission ID.
+%% Use this when submitting an article to a sponsored event. You'll
+%% receive a unique submission ID from the organizers
+%% of the event, and this ID should be used as the parameter to this command.
+%%\acmSubmissionID{123-A56-BU3}
+
+%%
+%% For managing citations, it is recommended to use bibliography
+%% files in BibTeX format.
+%%
+%% You can then either use BibTeX with the ACM-Reference-Format style,
+%% or BibLaTeX with the acmnumeric or acmauthoryear sytles, that include
+%% support for advanced citation of software artefact from the
+%% biblatex-software package, also separately available on CTAN.
+%%
+%% Look at the sample-*-biblatex.tex files for templates showcasing
+%% the biblatex styles.
+%%
+
+%%
+%% The majority of ACM publications use numbered citations and
+%% references.  The command \citestyle{authoryear} switches to the
+%% "author year" style.
+%%
+%% If you are preparing content for an event
+%% sponsored by ACM SIGGRAPH, you must use the "author year" style of
+%% citations and references.
+%% Uncommenting
+%% the next command will enable that style.
+%%\citestyle{acmauthoryear}
+
+
+%%
+%% end of the preamble, start of the body of the document source.
+\begin{document}
+
+%%
+%% The "title" command has an optional parameter,
+%% allowing the author to define a "short title" to be used in page headers.
+\title{The Name of the Title Is Hope}
+
+%%
+%% The "author" command and its associated commands are used to define
+%% the authors and their affiliations.
+%% Of note is the shared affiliation of the first two authors, and the
+%% "authornote" and "authornotemark" commands
+%% used to denote shared contribution to the research.
+\author{Ben Trovato}
+\authornote{Both authors contributed equally to this research.}
+\email{trovato@corporation.com}
+\orcid{1234-5678-9012}
+\author{G.K.M. Tobin}
+\authornotemark[1]
+\email{webmaster@marysville-ohio.com}
+\affiliation{%
+  \institution{Institute for Clarity in Documentation}
+  \city{Dublin}
+  \state{Ohio}
+  \country{USA}
+}
+
+\author{Lars Th{\o}rv{\"a}ld}
+\affiliation{%
+  \institution{The Th{\o}rv{\"a}ld Group}
+  \city{Hekla}
+  \country{Iceland}}
+\email{larst@affiliation.org}
+
+\author{Valerie B\'eranger}
+\affiliation{%
+  \institution{Inria Paris-Rocquencourt}
+  \city{Rocquencourt}
+  \country{France}
+}
+
+\author{Aparna Patel}
+\affiliation{%
+ \institution{Rajiv Gandhi University}
+ \city{Doimukh}
+ \state{Arunachal Pradesh}
+ \country{India}}
+
+\author{Huifen Chan}
+\affiliation{%
+  \institution{Tsinghua University}
+  \city{Haidian Qu}
+  \state{Beijing Shi}
+  \country{China}}
+
+\author{Charles Palmer}
+\affiliation{%
+  \institution{Palmer Research Laboratories}
+  \city{San Antonio}
+  \state{Texas}
+  \country{USA}}
+\email{cpalmer@prl.com}
+
+\author{John Smith}
+\affiliation{%
+  \institution{The Th{\o}rv{\"a}ld Group}
+  \city{Hekla}
+  \country{Iceland}}
+\email{jsmith@affiliation.org}
+
+\author{Julius P. Kumquat}
+\affiliation{%
+  \institution{The Kumquat Consortium}
+  \city{New York}
+  \country{USA}}
+\email{jpkumquat@consortium.net}
+
+%%
+%% By default, the full list of authors will be used in the page
+%% headers. Often, this list is too long, and will overlap
+%% other information printed in the page headers. This command allows
+%% the author to define a more concise list
+%% of authors' names for this purpose.
+\renewcommand{\shortauthors}{Trovato et al.}
+
+%%
+%% The abstract is a short summary of the work to be presented in the
+%% article.
+\begin{abstract}
+  A clear and well-documented \LaTeX\ document is presented as an
+  article formatted for publication by ACM in a conference proceedings
+  or journal publication. Based on the ``acmart'' document class, this
+  article presents and explains many of the common variations, as well
+  as many of the formatting elements an author may use in the
+  preparation of the documentation of their work.
+\end{abstract}
+
+%%
+%% The code below is generated by the tool at http://dl.acm.org/ccs.cfm.
+%% Please copy and paste the code instead of the example below.
+%%
+\begin{CCSXML}
+<ccs2012>
+ <concept>
+  <concept_id>00000000.0000000.0000000</concept_id>
+  <concept_desc>Do Not Use This Code, Generate the Correct Terms for Your Paper</concept_desc>
+  <concept_significance>500</concept_significance>
+ </concept>
+ <concept>
+  <concept_id>00000000.00000000.00000000</concept_id>
+  <concept_desc>Do Not Use This Code, Generate the Correct Terms for Your Paper</concept_desc>
+  <concept_significance>300</concept_significance>
+ </concept>
+ <concept>
+  <concept_id>00000000.00000000.00000000</concept_id>
+  <concept_desc>Do Not Use This Code, Generate the Correct Terms for Your Paper</concept_desc>
+  <concept_significance>100</concept_significance>
+ </concept>
+ <concept>
+  <concept_id>00000000.00000000.00000000</concept_id>
+  <concept_desc>Do Not Use This Code, Generate the Correct Terms for Your Paper</concept_desc>
+  <concept_significance>100</concept_significance>
+ </concept>
+</ccs2012>
+\end{CCSXML}
+
+\ccsdesc[500]{Do Not Use This Code~Generate the Correct Terms for Your Paper}
+\ccsdesc[300]{Do Not Use This Code~Generate the Correct Terms for Your Paper}
+\ccsdesc{Do Not Use This Code~Generate the Correct Terms for Your Paper}
+\ccsdesc[100]{Do Not Use This Code~Generate the Correct Terms for Your Paper}
+
+%%
+%% Keywords. The author(s) should pick words that accurately describe
+%% the work being presented. Separate the keywords with commas.
+\keywords{Do, Not, Us, This, Code, Put, the, Correct, Terms, for,
+  Your, Paper}
+%% A "teaser" image appears between the author and affiliation
+%% information and the body of the document, and typically spans the
+%% page.
+\begin{teaserfigure}
+  \includegraphics[width=\textwidth]{sampleteaser}
+  \caption{Seattle Mariners at Spring Training, 2010.}
+  \Description{Enjoying the baseball game from the third-base
+  seats. Ichiro Suzuki preparing to bat.}
+  \label{fig:teaser}
+\end{teaserfigure}
+
+\received{20 February 2007}
+\received[revised]{12 March 2009}
+\received[accepted]{5 June 2009}
+
+%%
+%% This command processes the author and affiliation and title
+%% information and builds the first part of the formatted document.
+\maketitle
+
+\section{Introduction}
+ACM's consolidated article template, introduced in 2017, provides a
+consistent \LaTeX\ style for use across ACM publications, and
+incorporates accessibility and metadata-extraction functionality
+necessary for future Digital Library endeavors. Numerous ACM and
+SIG-specific \LaTeX\ templates have been examined, and their unique
+features incorporated into this single new template.
+
+If you are new to publishing with ACM, this document is a valuable
+guide to the process of preparing your work for publication. If you
+have published with ACM before, this document provides insight and
+instruction into more recent changes to the article template.
+
+The ``\verb|acmart|'' document class can be used to prepare articles
+for any ACM publication --- conference or journal, and for any stage
+of publication, from review to final ``camera-ready'' copy, to the
+author's own version, with {\itshape very} few changes to the source.
+
+\section{Template Overview}
+As noted in the introduction, the ``\verb|acmart|'' document class can
+be used to prepare many different kinds of documentation --- a
+double-anonymous initial submission of a full-length technical paper, a
+two-page SIGGRAPH Emerging Technologies abstract, a ``camera-ready''
+journal article, a SIGCHI Extended Abstract, and more --- all by
+selecting the appropriate {\itshape template style} and {\itshape
+  template parameters}.
+
+This document will explain the major features of the document
+class. For further information, the {\itshape \LaTeX\ User's Guide} is
+available from
+\url{https://www.acm.org/publications/proceedings-template}.
+
+\subsection{Template Styles}
+
+The primary parameter given to the ``\verb|acmart|'' document class is
+the {\itshape template style} which corresponds to the kind of publication
+or SIG publishing the work. This parameter is enclosed in square
+brackets and is a part of the {\verb|documentclass|} command:
+\begin{verbatim}
+  \documentclass[STYLE]{acmart}
+\end{verbatim}
+
+Journals use one of three template styles. All but three ACM journals
+use the {\verb|acmsmall|} template style:
+\begin{itemize}
+\item {\texttt{acmsmall}}: The default journal template style.
+\item {\texttt{acmlarge}}: Used by JOCCH and TAP.
+\item {\texttt{acmtog}}: Used by TOG.
+\end{itemize}
+
+The majority of conference proceedings documentation will use the {\verb|acmconf|} template style.
+\begin{itemize}
+\item {\texttt{sigconf}}: The default proceedings template style.
+\item{\texttt{sigchi}}: Used for SIGCHI conference articles.
+\item{\texttt{sigplan}}: Used for SIGPLAN conference articles.
+\end{itemize}
+
+\subsection{Template Parameters}
+
+In addition to specifying the {\itshape template style} to be used in
+formatting your work, there are a number of {\itshape template parameters}
+which modify some part of the applied template style. A complete list
+of these parameters can be found in the {\itshape \LaTeX\ User's Guide.}
+
+Frequently-used parameters, or combinations of parameters, include:
+\begin{itemize}
+\item {\texttt{anonymous,review}}: Suitable for a ``double-anonymous''
+  conference submission. Anonymizes the work and includes line
+  numbers. Use with the \texttt{\acmSubmissionID} command to print the
+  submission's unique ID on each page of the work.
+\item{\texttt{authorversion}}: Produces a version of the work suitable
+  for posting by the author.
+\item{\texttt{screen}}: Produces colored hyperlinks.
+\end{itemize}
+
+This document uses the following string as the first command in the
+source file:
+\begin{verbatim}
+\documentclass[sigconf]{acmart}
+\end{verbatim}
+
+\section{Modifications}
+
+Modifying the template --- including but not limited to: adjusting
+margins, typeface sizes, line spacing, paragraph and list definitions,
+and the use of the \verb|\vspace| command to manually adjust the
+vertical spacing between elements of your work --- is not allowed.
+
+{\bfseries Your document will be returned to you for revision if
+  modifications are discovered.}
+
+\section{Typefaces}
+
+The ``\verb|acmart|'' document class requires the use of the
+``Libertine'' typeface family. Your \TeX\ installation should include
+this set of packages. Please do not substitute other typefaces. The
+``\verb|lmodern|'' and ``\verb|ltimes|'' packages should not be used,
+as they will override the built-in typeface families.
+
+\section{Title Information}
+
+The title of your work should use capital letters appropriately -
+\url{https://capitalizemytitle.com/} has useful rules for
+capitalization. Use the {\verb|title|} command to define the title of
+your work. If your work has a subtitle, define it with the
+{\verb|subtitle|} command.  Do not insert line breaks in your title.
+
+If your title is lengthy, you must define a short version to be used
+in the page headers, to prevent overlapping text. The \verb|title|
+command has a ``short title'' parameter:
+\begin{verbatim}
+  \title[short title]{full title}
+\end{verbatim}
+
+\section{Authors and Affiliations}
+
+Each author must be defined separately for accurate metadata
+identification.  As an exception, multiple authors may share one
+affiliation. Authors' names should not be abbreviated; use full first
+names wherever possible. Include authors' e-mail addresses whenever
+possible.
+
+Grouping authors' names or e-mail addresses, or providing an ``e-mail
+alias,'' as shown below, is not acceptable:
+\begin{verbatim}
+  \author{Brooke Aster, David Mehldau}
+  \email{dave,judy,steve@university.edu}
+  \email{firstname.lastname@phillips.org}
+\end{verbatim}
+
+The \verb|authornote| and \verb|authornotemark| commands allow a note
+to apply to multiple authors --- for example, if the first two authors
+of an article contributed equally to the work.
+
+If your author list is lengthy, you must define a shortened version of
+the list of authors to be used in the page headers, to prevent
+overlapping text. The following command should be placed just after
+the last \verb|\author{}| definition:
+\begin{verbatim}
+  \renewcommand{\shortauthors}{McCartney, et al.}
+\end{verbatim}
+Omitting this command will force the use of a concatenated list of all
+of the authors' names, which may result in overlapping text in the
+page headers.
+
+The article template's documentation, available at
+\url{https://www.acm.org/publications/proceedings-template}, has a
+complete explanation of these commands and tips for their effective
+use.
+
+Note that authors' addresses are mandatory for journal articles.
+
+\section{Rights Information}
+
+Authors of any work published by ACM will need to complete a rights
+form. Depending on the kind of work, and the rights management choice
+made by the author, this may be copyright transfer, permission,
+license, or an OA (open access) agreement.
+
+Regardless of the rights management choice, the author will receive a
+copy of the completed rights form once it has been submitted. This
+form contains \LaTeX\ commands that must be copied into the source
+document. When the document source is compiled, these commands and
+their parameters add formatted text to several areas of the final
+document:
+\begin{itemize}
+\item the ``ACM Reference Format'' text on the first page.
+\item the ``rights management'' text on the first page.
+\item the conference information in the page header(s).
+\end{itemize}
+
+Rights information is unique to the work; if you are preparing several
+works for an event, make sure to use the correct set of commands with
+each of the works.
+
+The ACM Reference Format text is required for all articles over one
+page in length, and is optional for one-page articles (abstracts).
+
+\section{CCS Concepts and User-Defined Keywords}
+
+Two elements of the ``acmart'' document class provide powerful
+taxonomic tools for you to help readers find your work in an online
+search.
+
+The ACM Computing Classification System ---
+\url{https://www.acm.org/publications/class-2012} --- is a set of
+classifiers and concepts that describe the computing
+discipline. Authors can select entries from this classification
+system, via \url{https://dl.acm.org/ccs/ccs.cfm}, and generate the
+commands to be included in the \LaTeX\ source.
+
+User-defined keywords are a comma-separated list of words and phrases
+of the authors' choosing, providing a more flexible way of describing
+the research being presented.
+
+CCS concepts and user-defined keywords are required for for all
+articles over two pages in length, and are optional for one- and
+two-page articles (or abstracts).
+
+\section{Sectioning Commands}
+
+Your work should use standard \LaTeX\ sectioning commands:
+\verb|section|, \verb|subsection|, \verb|subsubsection|, and
+\verb|paragraph|. They should be numbered; do not remove the numbering
+from the commands.
+
+Simulating a sectioning command by setting the first word or words of
+a paragraph in boldface or italicized text is {\bfseries not allowed.}
+
+\section{Tables}
+
+The ``\verb|acmart|'' document class includes the ``\verb|booktabs|''
+package --- \url{https://ctan.org/pkg/booktabs} --- for preparing
+high-quality tables.
+
+Table captions are placed {\itshape above} the table.
+
+Because tables cannot be split across pages, the best placement for
+them is typically the top of the page nearest their initial cite.  To
+ensure this proper ``floating'' placement of tables, use the
+environment \textbf{table} to enclose the table's contents and the
+table caption.  The contents of the table itself must go in the
+\textbf{tabular} environment, to be aligned properly in rows and
+columns, with the desired horizontal and vertical rules.  Again,
+detailed instructions on \textbf{tabular} material are found in the
+\textit{\LaTeX\ User's Guide}.
+
+Immediately following this sentence is the point at which
+Table~\ref{tab:freq} is included in the input file; compare the
+placement of the table here with the table in the printed output of
+this document.
+
+\begin{table}
+  \caption{Frequency of Special Characters}
+  \label{tab:freq}
+  \begin{tabular}{ccl}
+    \toprule
+    Non-English or Math&Frequency&Comments\\
+    \midrule
+    \O & 1 in 1,000& For Swedish names\\
+    $\pi$ & 1 in 5& Common in math\\
+    \$ & 4 in 5 & Used in business\\
+    $\Psi^2_1$ & 1 in 40,000& Unexplained usage\\
+  \bottomrule
+\end{tabular}
+\end{table}
+
+To set a wider table, which takes up the whole width of the page's
+live area, use the environment \textbf{table*} to enclose the table's
+contents and the table caption.  As with a single-column table, this
+wide table will ``float'' to a location deemed more
+desirable. Immediately following this sentence is the point at which
+Table~\ref{tab:commands} is included in the input file; again, it is
+instructive to compare the placement of the table here with the table
+in the printed output of this document.
+
+\begin{table*}
+  \caption{Some Typical Commands}
+  \label{tab:commands}
+  \begin{tabular}{ccl}
+    \toprule
+    Command &A Number & Comments\\
+    \midrule
+    \texttt{{\char'134}author} & 100& Author \\
+    \texttt{{\char'134}table}& 300 & For tables\\
+    \texttt{{\char'134}table*}& 400& For wider tables\\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
+Always use midrule to separate table header rows from data rows, and
+use it only for this purpose. This enables assistive technologies to
+recognise table headers and support their users in navigating tables
+more easily.
+
+\section{Math Equations}
+You may want to display math equations in three distinct styles:
+inline, numbered or non-numbered display.  Each of the three are
+discussed in the next sections.
+
+\subsection{Inline (In-text) Equations}
+A formula that appears in the running text is called an inline or
+in-text formula.  It is produced by the \textbf{math} environment,
+which can be invoked with the usual
+\texttt{{\char'134}begin\,\ldots{\char'134}end} construction or with
+the short form \texttt{\$\,\ldots\$}. You can use any of the symbols
+and structures, from $\alpha$ to $\omega$, available in
+\LaTeX~\cite{Lamport:LaTeX}; this section will simply show a few
+examples of in-text equations in context. Notice how this equation:
+\begin{math}
+  \lim_{n\rightarrow \infty}x=0
+\end{math},
+set here in in-line math style, looks slightly different when
+set in display style.  (See next section).
+
+\subsection{Display Equations}
+A numbered display equation---one set off by vertical space from the
+text and centered horizontally---is produced by the \textbf{equation}
+environment. An unnumbered display equation is produced by the
+\textbf{displaymath} environment.
+
+Again, in either environment, you can use any of the symbols and
+structures available in \LaTeX\@; this section will just give a couple
+of examples of display equations in context.  First, consider the
+equation, shown as an inline equation above:
+\begin{equation}
+  \lim_{n\rightarrow \infty}x=0
+\end{equation}
+Notice how it is formatted somewhat differently in
+the \textbf{displaymath}
+environment.  Now, we'll enter an unnumbered equation:
+\begin{displaymath}
+  \sum_{i=0}^{\infty} x + 1
+\end{displaymath}
+and follow it with another numbered equation:
+\begin{equation}
+  \sum_{i=0}^{\infty}x_i=\int_{0}^{\pi+2} f
+\end{equation}
+just to demonstrate \LaTeX's able handling of numbering.
+
+\section{Figures}
+
+The ``\verb|figure|'' environment should be used for figures. One or
+more images can be placed within a figure. If your figure contains
+third-party material, you must clearly identify it as such, as shown
+in the example below.
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=\linewidth]{sample-franklin}
+  \caption{1907 Franklin Model D roadster. Photograph by Harris \&
+    Ewing, Inc. [Public domain], via Wikimedia
+    Commons. (\url{https://goo.gl/VLCRBB}).}
+  \Description{A woman and a girl in white dresses sit in an open car.}
+\end{figure}
+
+Your figures should contain a caption which describes the figure to
+the reader.
+
+Figure captions are placed {\itshape below} the figure.
+
+Every figure should also have a figure description unless it is purely
+decorative. These descriptions convey what’s in the image to someone
+who cannot see it. They are also used by search engine crawlers for
+indexing images, and when images cannot be loaded.
+
+A figure description must be unformatted plain text less than 2000
+characters long (including spaces).  {\bfseries Figure descriptions
+  should not repeat the figure caption – their purpose is to capture
+  important information that is not already provided in the caption or
+  the main text of the paper.} For figures that convey important and
+complex new information, a short text description may not be
+adequate. More complex alternative descriptions can be placed in an
+appendix and referenced in a short figure description. For example,
+provide a data table capturing the information in a bar chart, or a
+structured list representing a graph.  For additional information
+regarding how best to write figure descriptions and why doing this is
+so important, please see
+\url{https://www.acm.org/publications/taps/describing-figures/}.
+
+\subsection{The ``Teaser Figure''}
+
+A ``teaser figure'' is an image, or set of images in one figure, that
+are placed after all author and affiliation information, and before
+the body of the article, spanning the page. If you wish to have such a
+figure in your article, place the command immediately before the
+\verb|\maketitle| command:
+\begin{verbatim}
+  \begin{teaserfigure}
+    \includegraphics[width=\textwidth]{sampleteaser}
+    \caption{figure caption}
+    \Description{figure description}
+  \end{teaserfigure}
+\end{verbatim}
+
+\section{Citations and Bibliographies}
+
+The use of \BibTeX\ for the preparation and formatting of one's
+references is strongly recommended. Authors' names should be complete
+--- use full first names (``Donald E. Knuth'') not initials
+(``D. E. Knuth'') --- and the salient identifying features of a
+reference should be included: title, year, volume, number, pages,
+article DOI, etc.
+
+The bibliography is included in your source document with these two
+commands, placed just before the \verb|\end{document}| command:
+\begin{verbatim}
+  \bibliographystyle{ACM-Reference-Format}
+  \bibliography{bibfile}
+\end{verbatim}
+where ``\verb|bibfile|'' is the name, without the ``\verb|.bib|''
+suffix, of the \BibTeX\ file.
+
+Citations and references are numbered by default. A small number of
+ACM publications have citations and references formatted in the
+``author year'' style; for these exceptions, please include this
+command in the {\bfseries preamble} (before the command
+``\verb|\begin{document}|'') of your \LaTeX\ source:
+\begin{verbatim}
+  \citestyle{acmauthoryear}
+\end{verbatim}
+
+
+  Some examples.  A paginated journal article \cite{Abril07}, an
+  enumerated journal article \cite{Cohen07}, a reference to an entire
+  issue \cite{JCohen96}, a monograph (whole book) \cite{Kosiur01}, a
+  monograph/whole book in a series (see 2a in spec. document)
+  \cite{Harel79}, a divisible-book such as an anthology or compilation
+  \cite{Editor00} followed by the same example, however we only output
+  the series if the volume number is given \cite{Editor00a} (so
+  Editor00a's series should NOT be present since it has no vol. no.),
+  a chapter in a divisible book \cite{Spector90}, a chapter in a
+  divisible book in a series \cite{Douglass98}, a multi-volume work as
+  book \cite{Knuth97}, a couple of articles in a proceedings (of a
+  conference, symposium, workshop for example) (paginated proceedings
+  article) \cite{Andler79, Hagerup1993}, a proceedings article with
+  all possible elements \cite{Smith10}, an example of an enumerated
+  proceedings article \cite{VanGundy07}, an informally published work
+  \cite{Harel78}, a couple of preprints \cite{Bornmann2019,
+    AnzarootPBM14}, a doctoral dissertation \cite{Clarkson85}, a
+  master's thesis: \cite{anisi03}, an online document / world wide web
+  resource \cite{Thornburg01, Ablamowicz07, Poker06}, a video game
+  (Case 1) \cite{Obama08} and (Case 2) \cite{Novak03} and \cite{Lee05}
+  and (Case 3) a patent \cite{JoeScientist001}, work accepted for
+  publication \cite{rous08}, 'YYYYb'-test for prolific author
+  \cite{SaeediMEJ10} and \cite{SaeediJETC10}. Other cites might
+  contain 'duplicate' DOI and URLs (some SIAM articles)
+  \cite{Kirschmer:2010:AEI:1958016.1958018}. Boris / Barbara Beeton:
+  multi-volume works as books \cite{MR781536} and \cite{MR781537}. A
+  couple of citations with DOIs:
+  \cite{2004:ITE:1009386.1010128,Kirschmer:2010:AEI:1958016.1958018}. Online
+  citations: \cite{TUGInstmem, Thornburg01, CTANacmart}.
+  Artifacts: \cite{R} and \cite{UMassCitations}.
+
+\section{Acknowledgments}
+
+Identification of funding sources and other support, and thanks to
+individuals and groups that assisted in the research and the
+preparation of the work should be included in an acknowledgment
+section, which is placed just before the reference section in your
+document.
+
+This section has a special environment:
+\begin{verbatim}
+  \begin{acks}
+  ...
+  \end{acks}
+\end{verbatim}
+so that the information contained therein can be more easily collected
+during the article metadata extraction phase, and to ensure
+consistency in the spelling of the section heading.
+
+Authors should not prepare this section as a numbered or unnumbered {\verb|\section|}; please use the ``{\verb|acks|}'' environment.
+
+\section{Appendices}
+
+If your work needs an appendix, add it before the
+``\verb|\end{document}|'' command at the conclusion of your source
+document.
+
+Start the appendix with the ``\verb|appendix|'' command:
+\begin{verbatim}
+  \appendix
+\end{verbatim}
+and note that in the appendix, sections are lettered, not
+numbered. This document has two appendices, demonstrating the section
+and subsection identification method.
+
+\section{Multi-language papers}
+
+Papers may be written in languages other than English or include
+titles, subtitles, keywords and abstracts in different languages (as a
+rule, a paper in a language other than English should include an
+English title and an English abstract).  Use \verb|language=...| for
+every language used in the paper.  The last language indicated is the
+main language of the paper.  For example, a French paper with
+additional titles and abstracts in English and German may start with
+the following command
+\begin{verbatim}
+\documentclass[sigconf, language=english, language=german,
+               language=french]{acmart}
+\end{verbatim}
+
+The title, subtitle, keywords and abstract will be typeset in the main
+language of the paper.  The commands \verb|\translatedXXX|, \verb|XXX|
+begin title, subtitle and keywords, can be used to set these elements
+in the other languages.  The environment \verb|translatedabstract| is
+used to set the translation of the abstract.  These commands and
+environment have a mandatory first argument: the language of the
+second argument.  See \verb|sample-sigconf-i13n.tex| file for examples
+of their usage.
+
+\section{SIGCHI Extended Abstracts}
+
+The ``\verb|sigchi-a|'' template style (available only in \LaTeX\ and
+not in Word) produces a landscape-orientation formatted article, with
+a wide left margin. Three environments are available for use with the
+``\verb|sigchi-a|'' template style, and produce formatted output in
+the margin:
+\begin{description}
+\item[\texttt{sidebar}:]  Place formatted text in the margin.
+\item[\texttt{marginfigure}:] Place a figure in the margin.
+\item[\texttt{margintable}:] Place a table in the margin.
+\end{description}
+
+%%
+%% The acknowledgments section is defined using the "acks" environment
+%% (and NOT an unnumbered section). This ensures the proper
+%% identification of the section in the article metadata, and the
+%% consistent spelling of the heading.
+\begin{acks}
+To Robert, for the bagels and explaining CMYK and color spaces.
+\end{acks}
+
+%%
+%% The next two lines define the bibliography style to be used, and
+%% the bibliography file.
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{sample-base}
+
+
+%%
+%% If your work has an appendix, this is the place to put it.
+\appendix
+
+\section{Research Methods}
+
+\subsection{Part One}
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi
+malesuada, quam in pulvinar varius, metus nunc fermentum urna, id
+sollicitudin purus odio sit amet enim. Aliquam ullamcorper eu ipsum
+vel mollis. Curabitur quis dictum nisl. Phasellus vel semper risus, et
+lacinia dolor. Integer ultricies commodo sem nec semper.
+
+\subsection{Part Two}
+
+Etiam commodo feugiat nisl pulvinar pellentesque. Etiam auctor sodales
+ligula, non varius nibh pulvinar semper. Suspendisse nec lectus non
+ipsum convallis congue hendrerit vitae sapien. Donec at laoreet
+eros. Vivamus non purus placerat, scelerisque diam eu, cursus
+ante. Etiam aliquam tortor auctor efficitur mattis.
+
+\section{Online Resources}
+
+Nam id fermentum dui. Suspendisse sagittis tortor a nulla mollis, in
+pulvinar ex pretium. Sed interdum orci quis metus euismod, et sagittis
+enim maximus. Vestibulum gravida massa ut felis suscipit
+congue. Quisque mattis elit a risus ultrices commodo venenatis eget
+dui. Etiam sagittis eleifend elementum.
+
+Nam interdum magna at lectus dignissim, ac dignissim lorem
+rhoncus. Maecenas eu arcu ac neque placerat aliquam. Nunc pulvinar
+massa et mattis lacinia.
+
+\end{document}
+\endinput
+%%
+%% End of file `sample-sigconf.tex'.
+
+
+
+
+\subsubsection{feature encodings $\stackrel{PQ}{\Longrightarrow}$ quantized codes.}
+    Once pre-training is complete, these embeddings are input into an encoder to transform them into a suitable dimension before quantization. Specifically, each embedding vector $\mathbf{e}$ is transformed into $\mathbf{s}$ by the encoder. The transformed vector $\mathbf{s}$ is then divided into $m$ sub-vectors $\{\mathbf{s}_1, \mathbf{s}_2, \ldots, \mathbf{s}_m\}$, where each sub-vector $\mathbf{s}_i \in \mathbb{R}^{d/m}$. Each sub-vector is independently quantized into a corresponding codeword $\mathbf{s}_{i,j}$, forming the quantized vector $\hat{\mathbf{s}}$:
+    \begin{equation}
+    \hat{\mathbf{s}} = [\mathbf{s}_{1,j_1}, \mathbf{s}_{2,j_2}, \ldots, \mathbf{s}_{m,j_m}].
+    \end{equation}
+    We choose concatenation as the method to form the quantized vector due to its minimal time overhead:
+    \begin{equation}
+    \hat{\mathbf{s}} = \text{concat}(\mathbf{s}_{1,j_1}, \mathbf{s}_{2,j_2}, \ldots, \mathbf{s}_{m,j_m}).
+    \end{equation}
+    
+    In the post-quantization stage, the embedding layer's weight matrix is denoted as $\mathbf{W}_q \in \mathbb{R}^{C \times d_q}$, where $C$ represents the number of codewords and $d_q$ represents the codeword dimension.
+
+
+
+
+
+To assess the influence of different pre-trained models on our framework, we conducted experiments using FM, DeepFM, and DCNv2 as the pre-training models for the embedding generation and subsequent quantization. For the downstream tasks, we utilized PNN model to evaluate the performance of the quantized embeddings in a recommendation system context.
+
+The experimental results on Criteo and Avazu, summarized in Table X, indicate that although there are slight variations in downstream task performance when using embeddings from different pre-trained models, these variations are minimal. This demonstrates that our framework exhibits high generalizability across different pre-trained models.
+
+This characteristic is particularly advantageous in industrial applications, where it allows for the use of smaller, less complex models to generate embeddings without significantly compromising performance. As a result, our framework ensures efficient and effective deployment in various practical scenarios.
+
+
+
+
+
+
+
+We compare the memory and time consumption during the embedding step of various models, including the baseline model (PNN), DHE, xLightFM, and our proposed MemE-PNN. In our experimental setup, we use PNN as the baseline model and focus solely on the embedding layer's inference time and parameter count. The table \ref{tab:Time_memory} reports the total time taken to infer 100 batches.
+
+In real-world recommendation scenarios, the embedding step typically requires storing very large embedding tables, which often exceed GPU memory capacity, leading to significant time overhead for data retrieval and processing. The models compared here focus on memory-efficient embedding techniques, and we specifically measure the space and time costs associated with the embedding step.
+
+Table \ref{tab:Time_memory} shows that while DHE achieves the best results in terms of memory and time efficiency due to its aggressive dimensionality reduction via hashing, this comes at the cost of reduced recommendation performance. DHE's approach leverages deep networks to assign embeddings to individual buckets, significantly lowering memory usage but also degrading the model's representational capacity.
+
+Our proposed MemE-PNN and xLightFM achieve similar results in terms of memory savings and inference time. Both models employ quantization techniques during the inference phase, which avoid the need to store large embedding tables by using efficient code representations. However, xLightFM's joint training architecture limits its adaptability to new models during training. MemE-PNN excels by maintaining a flexible and efficient training process while ensuring minimal memory and time overhead, thereby enhancing recommendation performance in practical industrial scenarios.
+
+The baseline PNN exhibits the highest memory consumption and the longest processing time due to its large embedding table. In contrast, MemE-PNN not only reduces memory and time consumption but also maintains and improves actual recommendation effectiveness without significant increases in memory or time costs. This balance makes MemE-PNN particularly valuable in industrial applications.
+
+
+
+
+
+
+
+We compare the memory and time consumption during the embedding step of various models, including the baseline PNN, DHE, xLightFM, and our proposed MemE-PNN. In our experiments, we use PNN as the basic model and measure only the inference time and parameter count of the embedding layer, because in real-world recommendation scenarios, the embedding step typically requires storing very large embedding tables, which often exceed GPU memory capacity, leading to significant time overhead for data retrieval and processing. Table \ref{tab:Time_memory} reports the total time taken to infer 100 batches.
+
+From Table \ref{tab:Time_memory}, we observe that the baseline PNN exhibits the highest memory consumption and the longest processing time due to its large embedding table. In real-world recommendation scenarios, the embedding step typically requires storing very large embedding tables, which often exceed GPU memory capacity, leading to significant time overhead for data retrieval and processing.
+
+MemE-PNN and xLightFM achieve similar results in terms of memory savings and inference time, thanks to their use of quantization techniques during the inference phase. These techniques avoid the need to store large embedding tables by using efficient code representations. However, xLightFM's joint training architecture limits its adaptability to new models during training. In contrast, MemE-PNN maintains a flexible and efficient training process while ensuring minimal memory and time overhead, thereby enhancing recommendation performance in practical industrial scenarios.
+
+DHE achieves the best memory and time efficiency due to its aggressive dimensionality reduction via hashing. However, this comes at the cost of reduced recommendation performance, as the hashing technique limits the model's representational capacity.
+
+In summary, MemE-PNN not only reduces memory and time consumption but also maintains and improves recommendation effectiveness without significant increases in memory or time costs, making it particularly valuable in industrial applications.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\subsection{Baseline Models}
+
+\begin{itemize}
+    \item \textbf{Linear Models}
+    \begin{itemize}
+        \item \textbf{LR}: Logistic Regression is a linear model that uses a logistic function to model a binary dependent variable. It is often used as a baseline in recommendation systems due to its simplicity and interpretability.
+    \end{itemize}
+
+    \item \textbf{Factorization-based Models}
+    \begin{itemize}
+        \item \textbf{FM}: Factorization Machine models pairwise interactions between features efficiently, making it suitable for sparse data.
+        \item \textbf{AFM}: Attentional Factorization Machine enhances FM by applying attention mechanisms to model the importance of different feature interactions.
+        \item \textbf{DeepFM}: Combines FM for low-order feature interactions and deep neural networks for high-order interactions, improving recommendation accuracy.
+        \item \textbf{xLightFM}: \textit{[Description to be provided]}
+    \end{itemize}
+
+    \item \textbf{Neural Network Models}
+    \begin{itemize}
+        \item \textbf{PNN}: Product-based Neural Network incorporates product operations between feature embeddings, explicitly modeling feature interactions.
+        \item \textbf{DCNv2}: Deep \& Cross Network v2 captures both explicit and implicit feature interactions by stacking cross layers and deep layers.
+        \item \textbf{AutoInt}: Utilizes self-attention mechanisms to automatically learn feature interactions without manual feature engineering.
+        \item \textbf{AFN}: Adaptive Factorization Network dynamically learns the importance of different feature interactions using a neural network.
+        \item \textbf{SAM}: Self-Attentive Model leverages self-attention to capture complex feature interactions effectively.
+    \end{itemize}
+
+    \item \textbf{Gate-based Models}
+    \begin{itemize}
+        \item \textbf{GDCN}: Gate-based Deep Collaborative Network uses gating mechanisms to model the complex relationships between users and items, enhancing collaborative filtering signals.
+    \end{itemize}
+
+    \item \textbf{Hashing and Quantization Models}
+    \begin{itemize}
+        \item \textbf{DHE}: Deep Hash Embedding uses hashing techniques for dimensionality reduction, improving memory and time efficiency.\item \textbf{xLightFM}: A memory-efficient Factorization Machine that uses codebooks for embedding composition and adapts codebook size with neural architecture search.
+    \end{itemize}
+    
+
+    An industry-standard dataset available on Kaggle\footnote{https://www.kaggle.com/c/criteo-display-ad-challenge/}, which consists of user click data collected over one week to predict ad click-through rates (CTR). The dataset contains 45 million samples and 39 features, including 13 continuous features and 26 categorical features. The categorical features have large vocab sizes, with some features having vocab sizes exceeding one million.
+
+
+A benchmark dataset available on Kaggle\footnote{https://www.kaggle.com/c/avazu-ctr-prediction/}, used for CTR prediction and containing user click data over 11 consecutive days. The dataset consists of approximately 40 million samples and includes 24 features. These features are primarily categorical, with some having large vocab sizes, making it a comprehensive dataset for evaluating click-through rate prediction models.
+
+
+
+
+\textbf{Finding 1:} As a pluggable model, MemE-CTR achieves performance that consistently surpasses the base models it combines with, such as GDCN and PNN, as shown in rows 9 to 16 of the table.
+
+
+
+
+
+
+\textbf{Finding 1: The embedding tables play a great part in model parameters.} 
+The parameters of traditional CTR models are mainly concentrated in the embedding layer. Despite the model structure and complexity varies a lot from each other, the overall parameters are much of the same size. There can be a great optimization space in embedding layers of all CTR models and achieve a generalizable improvement.
+
+\textbf{Finding 1: The embedding tables play a great part in model parameters.} 
+The parameters of traditional CTR models are mainly concentrated in the embedding layer. Despite the model structure and complexity varying a lot from each other, the overall parameters are much of the same size. As shown in Table \ref{tab:XXX}, optimizing the embedding tables can reduce model parameters by over 90%, indicating substantial optimization space in the embedding layers for generalizable improvement.
+
+
+
+
+\textbf{Finding 3: The model's performance in embedding lookup time is closely related to the size of the embedding tables.} 
+In Figure \ref{fig:XXX}, we compare the time consumption of different models during the embedding lookup process. To ensure fairness, we measured the time required for 100 repeated embedding lookups under the same experimental parameters. The results show that using quantization algorithms reduces the time by approximately 50%, primarily due to the reduction in the size of the vocabulary. This demonstrates a strong correlation between inference time and vocabulary size.
+
+
+
+
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+
+\begin{document}
+
+\subsubsection{Stage 1: Embedding Layer Quantization}
+
+In our proposed framework, we employ a pre-trained embedding layer derived from an auxiliary Click-Through Rate (CTR) model. This embedding layer serves to transform input features into embedding vectors. Upon completion of the pre-training phase, these embeddings are fed into an encoder designed to adjust their dimensions suitably for the quantization process. Each embedding vector $\mathbf{e}$ is transformed into $\mathbf{s}$ by this encoder.
+
+The vector $\mathbf{s}$ is subsequently partitioned into $m$ sub-vectors $\{\mathbf{s}_1, \mathbf{s}_2, \ldots, \mathbf{s}_m\}$, with each sub-vector $\mathbf{s}_i \in \mathbb{R}^{d/m}$. Each sub-vector $\mathbf{s}_i$ is independently quantized into a corresponding codeword $\mathbf{z}_{i,j}$ drawn from a codebook, resulting in the formation of the quantized vector $\mathbf{z}$:
+\begin{equation}
+\mathbf{z} = [\mathbf{z}_{1,j_1}, \mathbf{z}_{2,j_2}, \ldots, \mathbf{z}_{m,j_m}].
+\end{equation}
+
+We opt for concatenation as the method to construct the quantized vector due to its minimal time overhead:
+\begin{equation}
+\mathbf{z} = \text{concat}(\mathbf{z}_{1,j_1}, \mathbf{z}_{2,j_2}, \ldots, \mathbf{z}_{m,j_m}).
+\end{equation}
+
+In the post-quantization phase, the weight matrix of the embedding layer is denoted as $\mathbf{W}_q \in \mathbb{R}^{C \times d_q}$, where $C$ represents the number of codewords and $d_q$ signifies the dimension of each codeword.
+
+\end{document}
+
+翻译版本：
+
+第一阶段：嵌入层量化
+
+在我们提出的框架中，我们采用了从辅助点击率（CTR）模型中获得的预训练嵌入层。该嵌入层用于将输入特征转换为嵌入向量。在完成预训练阶段后，这些嵌入向量被输入到一个编码器中，以适当地调整它们的维度，从而进行量化处理。每个嵌入向量 $\mathbf{e}$ 由该编码器转换为 $\mathbf{s}$。
+
+向量 $\mathbf{s}$ 随后被划分为 $m$ 个子向量 $\{\mathbf{s}_1, \mathbf{s}_2, \ldots, \mathbf{s}_m\}$，每个子向量 $\mathbf{s}_i \in \mathbb{R}^{d/m}$。每个子向量 $\mathbf{s}_i$ 独立地被量化为来自码本的相应码字 $\mathbf{z}_{i,j}$，从而形成量化向量 $\mathbf{z}$：
+$$
+\mathbf{z} = [\mathbf{z}_{1,j_1}, \mathbf{z}_{2,j_2}, \ldots, \mathbf{z}_{m,j_m}].
+$$
+
+我们选择拼接的方式来构建量化向量，因为其时间开销最小：
+$$
+\mathbf{z} = \text{concat}(\mathbf{z}_{1,j_1}, \mathbf{z}_{2,j_2}, \ldots, \mathbf{z}_{m,j_m}).
+$$
+
+在量化后的阶段，嵌入层的权重矩阵表示为 $\mathbf{W}_q \in \mathbb{R}^{C \times d_q}$，其中 $C$ 表示码字的数量，$d_q$ 表示每个码字的维度。
+
+
+
+
+
+
+
+
+
+
+
+
+
+@inproceedings{hashing_trick,
+  title={Feature hashing for large scale multitask learning},
+  author={Weinberger, Kilian and Dasgupta, Anirban and Langford, John and Smola, Alex and Attenberg, Josh},
+  booktitle={Proceedings of the 26th annual international conference on machine learning},
+  pages={1113--1120},
+  year={2009}
+}
+
+@inproceedings{improved_hash_1,
+  title={Getting deep recommenders fit: Bloom embeddings for sparse binary input/output networks},
+  author={Serr{\`a}, Joan and Karatzoglou, Alexandros},
+  booktitle={Proceedings of the Eleventh ACM Conference on Recommender Systems},
+  pages={279--287},
+  year={2017}
+}
+
+@article{improved_hash_2,
+  title={Hash embeddings for efficient word representations},
+  author={Tito Svenstrup, Dan and Hansen, Jonas and Winther, Ole},
+  journal={Advances in neural information processing systems},
+  volume={30},
+  year={2017}
+}
+
+@inproceedings{improved_hash_3,
+  title={Model size reduction using frequency based double hashing for recommender systems},
+  author={Zhang, Caojin and Liu, Yicun and Xie, Yuanpu and Ktena, Sofia Ira and Tejani, Alykhan and Gupta, Akshay and Myana, Pranay Kumar and Dilipkumar, Deepak and Paul, Suvadip and Ihara, Ikuhiro and others},
+  booktitle={Proceedings of the 14th ACM Conference on Recommender Systems},
+  pages={521--526},
+  year={2020}
+}
+
+@inproceedings{HashRec,
+  title={Candidate generation with binary codes for large-scale top-n recommendation},
+  author={Kang, Wang-Cheng and McAuley, Julian},
+  booktitle={Proceedings of the 28th ACM international conference on information and knowledge management},
+  pages={1523--1532},
+  year={2019}
+}
+
+@inproceedings{PRADO,
+  title={PRADO: Projection attention networks for document classification on-device},
+  author={Kaliamoorthi, Prabhu and Ravi, Sujith and Kozareva, Zornitsa},
+  booktitle={Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP)},
+  pages={5012--5021},
+  year={2019}
+}
+
+@article{survey_hash,
+  title={A survey on learning to hash},
+  author={Wang, Jingdong and Zhang, Ting and Sebe, Nicu and Shen, Heng Tao and others},
+  journal={IEEE transactions on pattern analysis and machine intelligence},
+  volume={40},
+  number={4},
+  pages={769--790},
+  year={2017},
+  publisher={IEEE}
+}
+
+@article{reformer,
+  title={Reformer: The efficient transformer},
+  author={Kitaev, Nikita and Kaiser, {\L}ukasz and Levskaya, Anselm},
+  journal={arXiv preprint arXiv:2001.04451},
+  year={2020}
+}
+
+@inproceedings{DPQ,
+  title={Differentiable product quantization for end-to-end embedding compression},
+  author={Chen, Ting and Li, Lala and Sun, Yizhou},
+  booktitle={International Conference on Machine Learning},
+  pages={1617--1626},
+  year={2020},
+  organization={PMLR}
+}
+
+@article{OPQ,
+  title={Optimized product quantization},
+  author={Ge, Tiezheng and He, Kaiming and Ke, Qifa and Sun, Jian},
+  journal={IEEE transactions on pattern analysis and machine intelligence},
+  volume={36},
+  number={4},
+  pages={744--755},
+  year={2013},
+  publisher={IEEE}
+}
+
+@article{improved_PQ_1,
+  title={Product quantization for nearest neighbor search},
+  author={Jegou, Herve and Douze, Matthijs and Schmid, Cordelia},
+  journal={IEEE transactions on pattern analysis and machine intelligence},
+  volume={33},
+  number={1},
+  pages={117--128},
+  year={2010},
+  publisher={IEEE}
+}
+
+@article{improved_PQ_2,
+  title={Statistical theory of quantization: Results and limits},
+  author={Koll{\'a}r, Istv{\'a}n},
+  journal={Periodica Polytechnica Electrical Engineering (Archives)},
+  volume={28},
+  number={2-3},
+  pages={173--189},
+  year={1984}
+}
+
+
+
+
+点击率是什么
+现在有什么
+列菜名
+蔡明细说
+问题
+
+
+
+
+
+
+如前所述，当代CTR预测方法在处理大型嵌入空间时面临挑战，导致存储需求大幅增加并且推理效率降低。传统的量化方法经常忽视CTR数据的独特特征，导致编码分布不平衡。
+本文旨在在保持类似准确性的同时压缩嵌入空间。第4.1节介绍了MEC框架，第4.2节阐明了针对CTR数据量身定制的产品量化流行度正则化的调整，第4.3节考察了对比学习的应用以实现改善数据分布。
+
+如前所述，当处理大型嵌入空间时，现代CTR预测方法面临着挑战，导致存储需求大幅增加，推断效率降低。传统的量化方法通常无法优先考虑高频特征，导致这些重要特征的嵌入质量较差。此外，直接考虑特征频率可能会导致低频尾特征被高频特征压倒，从而对它们的性能和交互产生负面影响。此外，传统的量化方法经常忽视特征嵌入均匀分布的需求，导致嵌入过于集中和同质化，从而损害了模型在CTR场景中的预测性能。本节旨在在保持类似精度的情况下压缩嵌入空间。第4.1节介绍了MEC框架，第4.2节阐明了适用于CTR数据的以流行度加权正则化（PWR）的产品量化的调整，第4.3节则审查了对比学习的应用，以实现改善的数据分布。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+The prediction of click-through rates (CTR) is crucial for online advertising and recommender systems. With recent advancements in deep learning, existing methods have markedly enhanced the capacity to capture feature interactions and mine user interests. However, most of them neglects the optimization of embedding layer. The embedding tables used to represent categorical and sequential features often become extremely large, exceeding GPU memory capacity and have to be placed into the CPU memory, causing substantial memory consumption and latency increasing due to frequent data transfers between GPU and CPU. To address these issues, we propose a \underline{M}odel-agnostic \underline{E}mbedding \underline{C}ompression (MEC) framework that quantizes pre-trained embeddings, thereby compressing embedding tables while maintaining recommendation performance. Our two-stage approach first introduces popularity-weighted regularization to balance the code distribution of high- and low-frequency features. Next, we incorporate a contrastive learning mechanism to ensure an even distribution of quantized codes, enhancing the distinctiveness of embeddings. Experiments on three datasets demonstrate that our method significantly reduces memory usage by over 50x while achieving comparable or superior recommendation performance to existing models. The codes is available at: \href{https://anonymous.4open.science/r/MEC/}{https://anonymous.4open.science/r/MEC/}
+
+
+
+
+
+\section{Tokenizer Application}
+Tokenizers play a crucial role in computational systems by converting raw input data into formats suitable for processing by machine learning models. They bridge the gap between diverse data types and the models that analyze them, enabling effective data transformation and analysis.
+
+\subsection{Tokenization Techniques in Recommendation Systems}
+In recommendation systems, tokenization is fundamental for converting categorical data into a format that can be utilized by various models. Tokenizers help in mapping user actions and item features into a structured form, which is then used to generate embeddings and make recommendations.
+
+\subsubsection{ID Encoding and Hashing Techniques}
+ID encoding and hashing techniques address the challenge of transforming categorical data into a manageable form. Hashing methods, such as Feature Hashing \cite{weinberger2009feature} and Locality Sensitive Hashing (LSH) \cite{datar2004locality}, are employed to reduce dimensionality and improve computational efficiency. MinHash \cite{wu2020review} and DeepHashing \cite{luo2023survey} further enhance the effectiveness of hashing by enabling accurate similarity searches and handling large-scale data.
+
+\subsubsection{Semantic Encoding in Recommendation Models}
+Semantic encoding techniques focus on capturing the deeper relationships between data elements. Techniques such as Collaborative Filtering (CF) and matrix factorization methods like SVD++ \cite{koren2008factorization} and DeepFM \cite{guo2017deepfm} utilize embeddings to represent user-item interactions. Additionally, graph-based approaches like node2vec \cite{grover2016node2vec} and Graph Autoencoders \cite{kipf2016variational, hou2022graphmae} leverage network structures to enhance recommendation robustness.
+
+Self-supervised learning techniques, including SimCLR \cite{chen2020simple} and BERT4Rec \cite{sun2019bert4rec}, utilize contrastive and generative learning to improve recommendations by exploiting large amounts of unlabeled data.
+
+\subsection{Advances in Tokenization for Language Models}
+In the field of natural language processing, tokenization has evolved from simple rule-based methods to advanced techniques that enhance language model performance.
+
+\subsubsection{Text-Based Tokenization Methods}
+Early tokenization approaches included rule-based methods and statistical techniques like n-gram \cite{brown1992class} and TF-IDF. These methods laid the groundwork for more sophisticated approaches but had limitations in capturing deep semantic relationships.
+
+The introduction of word embeddings such as Word2Vec \cite{mikolov2013efficient} and GloVe \cite{pennington2014glove} revolutionized text representation by mapping words into continuous vector spaces, allowing for better semantic understanding.
+
+\subsubsection{Context-Aware Tokenization in Large Language Models}
+Large language models (LLMs) like BERT \cite{devlin2018bert} and GPT \cite{liu2023gpt} have transformed tokenization by leveraging Transformer architectures for improved context-aware processing. Techniques like Byte Pair Encoding (BPE) \cite{sennrich2015neural}, WordPiece \cite{schuster2012japanese}, and the Unigram algorithm \cite{kudo2018subword} optimize tokenization for various NLP tasks.
+
+Advancements in cross-modal tokenization, exemplified by models like CLIP \cite{radford2021learning} and DALL-E \cite{ramesh2021zero}, further extend tokenization capabilities to handle diverse data types, including images and text. Quantization methods such as Vector Quantization (VQ) \cite{van2017neural} and Product Quantization (PQ) \cite{jegou2010product} are also applied to efficiently encode and process large-scale data.
+
+The evolution of tokenization reflects a trajectory from simple methods to sophisticated, context-aware techniques that enhance the performance and versatility of machine learning models across various domains.
+
+
+
+2.3.1的留存
+In the domain of recommendation systems, tokenizer technology has undergone significant advancements. 
+Collaborative Filtering (CF) is a prominent method for generating embeddings by capturing user-item preferences to deliver precise recommendations. \cite{koren2021advances, su2009survey, schafer2007collaborative}
+For example, SVD++ \cite{koren2008factorization} extends traditional SVD by incorporating implicit feedback, allowing for improved handling of user-item interactions, DCN (Deep \& Cross Network) \cite{wang2017deep} captures high-order feature interactions through cross-network layers, and DeepFM \cite{guo2017deepfm} integrates factorization machines with deep neural networks to enhance feature extraction capabilities. 
+
+Concurrently, self-supervised learning methods exploit contrastive or generative learning techniques to train recommendation systems using vast amounts of unlabeled data. \cite{yu2023self, huang2022self}
+Techniques such as SimCLR \cite{chen2020simple} utilize data augmentation and contrastive loss for pre-training, BERT4Rec \cite{sun2019bert4rec} employs autoregressive generative learning to predict missing items within sequences, and CLRec \cite{zhou2021contrastive} incorporates contrastive learning to bolster recommendation robustness.
+
+Moreover, graph-based techniques like node2vec \cite{grover2016node2vec} and graph autoencoders \cite{kipf2016variational, hou2022graphmae, salehi2019graph} leverage complex relationships in network environments to generate embeddings. 
+Node2vec utilizes a random walk strategy to explore both local and global structures among nodes, GraphSAGE \cite{hamilton2017inductive} aggregates neighbor information for node embeddings, and Graph Autoencoders reconstructs graph structures in an unsupervised manner to learn node representations. 
+
+Hashing techniques address the sparsity issue of one-hot encoding by reducing dimensionality through hash functions. \cite{wang2017survey}
+For instance, Feature Hashing \cite{weinberger2009feature} is often used in natural language processing to handle large vocabularies efficiently by mapping them into a smaller feature space.
+LSH \cite{datar2004locality} accelerates the recommendation process via an approximate similarity search. 
+MinHash \cite{wu2020review} efficiently computes set similarities and is frequently utilized in social network analysis to detect communities or similar user groups based on shared interests or activities.
+DeepHashing \cite{luo2023survey} integrates deep learning to achieve more accurate hash mappings, allowing users to find visually or semantically similar products quickly.
+
+Finally, quantization techniques compress high-dimensional embeddings into compact codes, thereby reducing memory requirements and improving computational efficiency. 
+Product Quantization \cite{jegou2010product} is used in large-scale image databases, enabling efficient nearest-neighbor searches for image retrieval.
+Binary Embedding \cite{yi2015binary, kulis2009learning} converts embeddings into binary codes to expedite computation, which is beneficial in real-time bidding systems for digital advertising, where speed is critical.
+Moreover, end-to-end models like xLightFM \cite{jiang2021xlightfm} optimize quantized recommendation models by jointly training PQ and FM, adaptively selecting codebook sizes based on feature quantities for optimal quantization.

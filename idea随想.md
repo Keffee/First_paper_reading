@@ -1,4 +1,30 @@
+- follow: 王鸿伟，上交计算机系；Fajie Yuan
 - 对于SASRec，其每个user对应的item序列，每一个item生成一个对应embedding，这个embedding来源于语言模型对其feature等的编码（参考Text Is All You Need，或许可以构成类似字典的东西？但是这么结构化的东西或许直接转化成自然语言为好，但是考虑到最后接的是BERT，最好能够用某种手段将LLM增强的语句转换成词？或者专门针对token调一下PLM）
 - Once修改了LLaMA的最后一层，让它改为一个Linear+Attention层，从而输出LLaMA的最后一层所有token（去除[PAD]）汇聚的编码
 - 修改一下ml的处理，把所有负节点加上
-
+  - 试了，效果一坨
+- 或许用Amazon这样稍显稀疏的数据集会好？但是华为威哥建议MovieLens也要好才好
+- 或许可以借鉴VAE，但是其实也就是正则化了而已，我也正则化了
+- S-MBRec 中，相似用户的判定是交互了相同的物品
+  
+- 一种类似于VQ-VAE的思路，因为其中要进行一次聚类，用最有代表性的方法来表示item，然而之中会获得聚类中心的embedding，这个embedding能否解码出来成为可读token？
+  - VQ/RQ作为一种编码化方法，实际上能够完成：文本->embedding->DNN embedding->code的过程，接下来使用序列推荐来提升聚类中心表征质量，这个表征可以解码（DNN解码+BERT解码）
+  - 思考
+    - 送进来一个batch的数据（RQ-VAE）
+    - 查询BERT编码，转为Batchsize\*768向量
+    - 送入encoder，得到50维向量
+    - 训练RQ-VAE
+    - 准备进入sasrec，送入一个batch的数据（SASRec）
+    - 数据送入encoder
+    - 断了
+    - issue closed
+  - 思考2
+    - 送进来一个batch的数据
+    - 查询BERT编码，转为Batchsize\*seqlen\*768向量
+    - 通过encoder，得到B\*s\*50向量
+    - RQBottleNeck，得到编码和中心（返回三个值：量化embedding，承诺损失和语义编码）
+    - 送入sasrec进行训练
+    - 现在我们知道了vqembedding的更新方法，实际上，每次调用rqbottleneck的quantize的时候，可以进行一次更新，这次更新使用ema而非梯度
+    - 还是得先训rqvae，然后取出每个item的embedding，用全部的embedding来初始化（模仿encoder部分），然后使用nn.embedding当做encoder，后续transformer作为decoder，用这种方式进行更新
+    - 或者说端到端，直接一步到位，反正encoder也能用。直接multi-task训练
+    - 试试看吧
